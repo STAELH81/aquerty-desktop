@@ -15,9 +15,10 @@
 4. Value : colle **tout** le contenu de  
    `C:\Users\sacha\.tauri\aquerty.key`  
    (ouvre-le avec Notepad, Ctrl+A, Ctrl+C)
-5. Si tu as mis un mot de passe à la génération, crée aussi  
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`  
-   Sinon laisse vide / ne crée pas le secret (le workflow tolère l’absence)
+5. Si tu as mis un mot de passe à la génération de la clé, crée aussi  
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` avec **exactement** ce mot de passe.  
+   **Sinon : ne crée PAS ce secret** (et s’il existe déjà vide / faux → **supprime-le**).  
+   Un password vide injecté par Actions provoque : `Wrong password for that key`.
 
 ## Sortir une nouvelle version (à chaque update)
 
