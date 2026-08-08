@@ -1,0 +1,15 @@
+---
+description: Never use em dashes (tirets cadratins) in UI or docs
+alwaysApply: true
+---
+
+# No em dashes
+
+Never use the em dash `—` (tiret cadratin) or en dash `–`.
+
+Allowed: normal hyphen `-`, ellipsis `…`, middle dot `·`.
+
+Examples:
+- Bad: `Via GitHub Releases — l'app peut...`
+- Good: `Mise a jour depuis les releases GitHub.`
+- Good: `Vérification…` / `30m · shutdown`

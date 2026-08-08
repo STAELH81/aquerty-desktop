@@ -1,0 +1,5 @@
+# Placeholder
+
+Remplace ce fichier par ta vraie capture PNG du même nom (`02-conditions.png`).
+
+Voir `README.md` dans ce dossier pour le guide.
