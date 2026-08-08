@@ -1,5 +1,0 @@
-# Placeholder
-
-Remplace ce fichier par ta vraie capture PNG du même nom (`03-settings.png`).
-
-Voir `README.md` dans ce dossier pour le guide.

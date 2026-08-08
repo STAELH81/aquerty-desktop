@@ -18,8 +18,6 @@ Idéal pour : fin de téléchargement, fin de rendu, “je m’endors devant mon
 
 ## Captures
 
-> Remplace les fichiers dans `docs/screenshots/` (mêmes noms) pour que les images s’affichent ici et sur Gumroad.
-
 ![Écran principal : timer et action](docs/screenshots/01-main.png)
 
 ![Conditions intelligentes (Pro)](docs/screenshots/02-conditions.png)
