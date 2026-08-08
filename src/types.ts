@@ -69,6 +69,7 @@ export interface AppSettings {
   accent: string;
   hotkeyOpen: string;
   hotkeyCancel: string;
+  autoCheckUpdates: boolean;
 }
 
 export interface LicenseInfo {

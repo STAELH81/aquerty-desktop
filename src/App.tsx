@@ -80,6 +80,12 @@ function App() {
         setAction(s.lastAction || "shutdown");
         document.documentElement.style.setProperty("--accent", s.accent || "#e2a84a");
 
+        if (s.autoCheckUpdates !== false) {
+          window.setTimeout(() => {
+            void checkForUpdates({ silent: true });
+          }, 1500);
+        }
+
         cleanups.push(
           await listen<ScheduleSnapshot>("schedule-updated", (event) => {
             startTransition(() => setSchedule(event.payload));
@@ -273,22 +279,23 @@ function App() {
     }
   }
 
-  async function checkForUpdates() {
-    setUpdateMsg("Vérification…");
+  async function checkForUpdates(opts?: { silent?: boolean }) {
+    const silent = opts?.silent ?? false;
+    if (!silent) setUpdateMsg("Vérification…");
     try {
       const update = await check();
       if (!update) {
-        setUpdateMsg("Déjà à jour.");
+        if (!silent) setUpdateMsg("Déjà à jour.");
         return;
       }
-      setUpdateMsg(`Mise à jour ${update.version}…`);
+      setUpdateMsg(`Mise à jour ${update.version} disponible — installation…`);
       await update.downloadAndInstall();
       setUpdateMsg("Installée — redémarrage…");
       await relaunch();
     } catch (e) {
-      setUpdateMsg(
-        "Updater pas encore branché (clé de signature / release). " + String(e),
-      );
+      if (!silent) {
+        setUpdateMsg("Impossible de vérifier les mises à jour. " + String(e));
+      }
     }
   }
 
@@ -600,152 +607,231 @@ function App() {
         )}
 
         {panel === "settings" && settings && (
-          <section className="hero enter panel">
-            <p className="eyebrow">Réglages</p>
-
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.minimizeToTray}
-                onChange={(e) => void persist({ minimizeToTray: e.target.checked })}
-              />
-              Réduire dans le tray à la fermeture
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.launchOnStartup}
-                onChange={(e) => void persist({ launchOnStartup: e.target.checked })}
-              />
-              Lancer au démarrage de Windows
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.widgetEnabled}
-                onChange={(e) => void persist({ widgetEnabled: e.target.checked })}
-              />
-              Mini-widget countdown (si timer actif)
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.soundEnabled}
-                onChange={(e) => void persist({ soundEnabled: e.target.checked })}
-              />
-              Sons d’alerte
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.notifyAt5m}
-                onChange={(e) => void persist({ notifyAt5m: e.target.checked })}
-              />
-              Notif à 5 minutes
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={settings.notifyAt1m}
-                onChange={(e) => void persist({ notifyAt1m: e.target.checked })}
-              />
-              Notif à 1 minute
-            </label>
-
-            <p className="hint">Accent</p>
-            <div className="presets">
-              {ACCENT_OPTIONS.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={`chip ${settings.accent === a.id ? "active" : ""}`}
-                  style={{ borderColor: a.id }}
-                  onClick={() => void persist({ accent: a.id })}
-                >
-                  {a.label}
-                </button>
-              ))}
+          <section className="hero enter panel settings-panel">
+            <div className="settings-header">
+              <p className="eyebrow">Réglages</p>
+              <h2 className="confirm-title settings-title">Préférences</h2>
             </div>
 
-            <label>
-              Hotkey ouvrir
-              <input
-                value={settings.hotkeyOpen}
-                onChange={(e) => void persist({ hotkeyOpen: e.target.value })}
-              />
-            </label>
-            <label>
-              Hotkey annuler
-              <input
-                value={settings.hotkeyCancel}
-                onChange={(e) => void persist({ hotkeyCancel: e.target.value })}
-              />
-            </label>
+            <div className="settings-scroll">
+              <div className="settings-section">
+                <h3 className="settings-heading">Général</h3>
+                <p className="settings-desc">Comportement de la fenêtre et du démarrage.</p>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Réduire dans le tray</strong>
+                    <small>Fermer la fenêtre garde l’app en arrière-plan</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.minimizeToTray}
+                    onChange={(e) => void persist({ minimizeToTray: e.target.checked })}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Lancer au démarrage</strong>
+                    <small>Ouvre Aquerty Stop avec Windows</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.launchOnStartup}
+                    onChange={(e) => void persist({ launchOnStartup: e.target.checked })}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Mini-widget</strong>
+                    <small>Petite fenêtre countdown quand un timer est actif</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.widgetEnabled}
+                    onChange={(e) => void persist({ widgetEnabled: e.target.checked })}
+                  />
+                </label>
+              </div>
 
-            <div className="preset-edit">
-              <p className="hint">Presets durée</p>
-              <div className="presets">
-                {settings.presets.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className="chip"
-                    onClick={() =>
-                      void persist({
-                        presets: settings.presets.filter((x) => x !== p),
-                      })
+              <div className="settings-section">
+                <h3 className="settings-heading">Alertes</h3>
+                <p className="settings-desc">Sons et notifications avant l’action.</p>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Sons d’alerte</strong>
+                    <small>Bip à 5 min, 1 min et au déclenchement</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.soundEnabled}
+                    onChange={(e) => void persist({ soundEnabled: e.target.checked })}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Notification à 5 minutes</strong>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.notifyAt5m}
+                    onChange={(e) => void persist({ notifyAt5m: e.target.checked })}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Notification à 1 minute</strong>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.notifyAt1m}
+                    onChange={(e) => void persist({ notifyAt1m: e.target.checked })}
+                  />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">Apparence</h3>
+                <p className="settings-desc">Couleur d’accent de l’interface.</p>
+                <div className="presets accent-row">
+                  {ACCENT_OPTIONS.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={`chip accent-chip ${settings.accent === a.id ? "active" : ""}`}
+                      style={{ ["--chip-accent" as string]: a.id }}
+                      onClick={() => void persist({ accent: a.id })}
+                    >
+                      <span className="accent-dot" style={{ background: a.id }} />
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">Raccourcis clavier</h3>
+                <p className="settings-desc">
+                  Format Tauri : <code>CommandOrControl+Shift+A</code>
+                </p>
+                <label className="field">
+                  Ouvrir la fenêtre
+                  <input
+                    defaultValue={settings.hotkeyOpen}
+                    key={`open-${settings.hotkeyOpen}`}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== settings.hotkeyOpen) void persist({ hotkeyOpen: v });
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  Annuler l’action en cours
+                  <input
+                    defaultValue={settings.hotkeyCancel}
+                    key={`cancel-${settings.hotkeyCancel}`}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== settings.hotkeyCancel) void persist({ hotkeyCancel: v });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">Presets de durée</h3>
+                <p className="settings-desc">Raccourcis affichés sous le champ temps.</p>
+                <div className="presets">
+                  {settings.presets.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className="chip"
+                      title="Supprimer"
+                      onClick={() =>
+                        void persist({
+                          presets: settings.presets.filter((x) => x !== p),
+                        })
+                      }
+                    >
+                      {p} ×
+                    </button>
+                  ))}
+                </div>
+                <div className="row add-row">
+                  <input
+                    value={newPreset}
+                    onChange={(e) => setNewPreset(e.target.value)}
+                    placeholder="45m"
+                  />
+                  <button className="btn" type="button" onClick={addPreset}>
+                    Ajouter
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">Profils 1-clic</h3>
+                <p className="settings-desc">
+                  Sauve le temps + action + conditions actuels pour les rappeler d’un clic.
+                </p>
+                <div className="presets">
+                  {settings.profiles.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="chip profile"
+                      title="Supprimer"
+                      onClick={() => void removeProfile(p.id)}
+                    >
+                      {p.name} ×
+                    </button>
+                  ))}
+                </div>
+                <div className="row add-row">
+                  <input
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="Fin de série"
+                  />
+                  <button className="btn" type="button" onClick={saveCurrentAsProfile}>
+                    Sauver
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">Mises à jour auto</h3>
+                <p className="settings-desc">
+                  Via GitHub Releases — l’app peut se mettre à jour toute seule.
+                </p>
+                <label className="toggle-row">
+                  <span>
+                    <strong>Vérifier au démarrage</strong>
+                    <small>Cherche une nouvelle version à chaque lancement</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.autoCheckUpdates !== false}
+                    onChange={(e) =>
+                      void persist({ autoCheckUpdates: e.target.checked })
                     }
-                  >
-                    {p} ×
-                  </button>
-                ))}
-              </div>
-              <div className="row">
-                <input
-                  value={newPreset}
-                  onChange={(e) => setNewPreset(e.target.value)}
-                  placeholder="45m"
-                />
-                <button className="btn" type="button" onClick={addPreset}>
-                  Ajouter
+                  />
+                </label>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => void checkForUpdates()}
+                >
+                  Vérifier maintenant
                 </button>
+                {updateMsg && <p className="hint">{updateMsg}</p>}
               </div>
             </div>
 
-            <div className="preset-edit">
-              <p className="hint">Sauver le setup actuel en profil</p>
-              <div className="row">
-                <input
-                  value={profileName}
-                  onChange={(e) => setProfileName(e.target.value)}
-                  placeholder="Fin de série"
-                />
-                <button className="btn" type="button" onClick={saveCurrentAsProfile}>
-                  Sauver
-                </button>
-              </div>
-              <div className="presets">
-                {settings.profiles.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="chip"
-                    onClick={() => void removeProfile(p.id)}
-                  >
-                    {p.name} ×
-                  </button>
-                ))}
-              </div>
+            <div className="settings-footer">
+              <button className="btn" onClick={() => setPanel("main")}>
+                Retour
+              </button>
             </div>
-
-            <button className="btn" type="button" onClick={checkForUpdates}>
-              Vérifier les mises à jour
-            </button>
-            {updateMsg && <p className="hint">{updateMsg}</p>}
-
-            <button className="btn" onClick={() => setPanel("main")}>
-              Retour
-            </button>
           </section>
         )}
 

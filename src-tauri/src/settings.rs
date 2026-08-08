@@ -54,6 +54,8 @@ pub struct AppSettings {
     pub hotkey_open: String,
     #[serde(default = "default_hotkey_cancel")]
     pub hotkey_cancel: String,
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
 }
 
 fn default_true() -> bool {
@@ -126,6 +128,7 @@ impl Default for AppSettings {
             accent: default_accent(),
             hotkey_open: default_hotkey_open(),
             hotkey_cancel: default_hotkey_cancel(),
+            auto_check_updates: true,
         }
     }
 }
