@@ -85,21 +85,9 @@ input {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background:
-    linear-gradient(145deg, rgba(226, 168, 74, 0.95), rgba(180, 120, 40, 0.7)),
-    var(--bg2);
+  object-fit: cover;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  position: relative;
-}
-
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  inset: 12px 11px;
-  border: 2.5px solid #1a1208;
-  border-radius: 999px;
-  border-left-color: transparent;
-  transform: rotate(-40deg);
+  flex-shrink: 0;
 }
 
 .brand-name {

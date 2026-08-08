@@ -305,7 +305,7 @@ function App() {
 
   const brand = (
     <header className="brand">
-      <div className="brand-mark" aria-hidden />
+      <img className="brand-mark" src="/icon.png" alt="" width={42} height={42} />
       <div>
         <p className="brand-name">Aquerty Stop</p>
         <p className="brand-tag">{isPro ? "Pro" : "Free"}</p>

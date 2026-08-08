@@ -26,3 +26,7 @@ src-tauri/target
 *.njsproj
 *.sln
 *.sw?
+
+# Private license inventory (never push)
+/private/
+
