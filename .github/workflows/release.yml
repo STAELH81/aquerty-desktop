@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Faster release compiles (slightly larger binary, fine for an indie app)
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
 jobs:
   release-windows:
     runs-on: windows-latest
@@ -23,11 +28,15 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: "./src-tauri -> target"
+          shared-key: "windows-release-nsis"
+          cache-on-failure: true
 
       - name: Install frontend deps
         run: npm ci
@@ -58,4 +67,5 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
+          args: --bundles nsis
           projectPath: .

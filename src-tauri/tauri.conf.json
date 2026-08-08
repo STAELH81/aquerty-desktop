@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "category": "Utility",
     "shortDescription": "Windows power timer",
     "longDescription": "Schedule shutdown, restart, sleep, hibernate and lock on Windows.",
