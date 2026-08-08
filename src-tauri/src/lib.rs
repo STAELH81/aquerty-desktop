@@ -166,7 +166,7 @@ fn do_cancel(app: &AppHandle, state: &AppState) -> ScheduleSnapshot {
     if let Some(schedule) = inner.schedule.take() {
         let elapsed = schedule
             .total_seconds
-            .saturating_sub(((schedule.ends_at_unix - Utc::now().timestamp()).max(0) as u64));
+            .saturating_sub((schedule.ends_at_unix - Utc::now().timestamp()).max(0) as u64);
         settings::push_history(
             &mut inner.settings,
             HistoryEntry {

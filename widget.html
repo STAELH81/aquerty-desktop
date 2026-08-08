@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aquerty Widget</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font-family: "Segoe UI", sans-serif;
+        user-select: none;
+      }
+      #root {
+        height: 100%;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: linear-gradient(160deg, #121a24, #0b1016);
+        border: 1px solid rgba(226, 168, 74, 0.35);
+        color: #e8eef6;
+        cursor: grab;
+      }
+      .label {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #8b9bb0;
+        margin-bottom: 4px;
+      }
+      .time {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: #e2a84a;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/widget.tsx"></script>
+  </body>
+</html>

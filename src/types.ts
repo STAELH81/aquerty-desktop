@@ -35,6 +35,23 @@ export interface ScheduleSnapshot {
   waitingForConditions: boolean;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  durationInput: string;
+  action: PowerAction;
+  conditions: SmartConditions;
+}
+
+export interface HistoryEntry {
+  atUnix: number;
+  action: PowerAction;
+  actionLabel: string;
+  durationSeconds: number;
+  durationLabel: string;
+  cancelled: boolean;
+}
+
 export interface AppSettings {
   lastAction: PowerAction;
   lastDurationInput: string;
@@ -43,12 +60,27 @@ export interface AppSettings {
   launchOnStartup: boolean;
   notifyBeforeSeconds: number;
   licenseKey?: string | null;
+  profiles: Profile[];
+  history: HistoryEntry[];
+  soundEnabled: boolean;
+  notifyAt5m: boolean;
+  notifyAt1m: boolean;
+  widgetEnabled: boolean;
+  accent: string;
+  hotkeyOpen: string;
+  hotkeyCancel: string;
 }
 
 export interface LicenseInfo {
   isPro: boolean;
   key: string | null;
   message: string;
+}
+
+export interface AlertPayload {
+  stage: string;
+  remainingSeconds: number;
+  sound: boolean;
 }
 
 export const ACTION_OPTIONS: {
@@ -63,6 +95,14 @@ export const ACTION_OPTIONS: {
   { id: "lock", label: "Verrouillage", pro: true },
 ];
 
+export const ACCENT_OPTIONS = [
+  { id: "#e2a84a", label: "Ambre" },
+  { id: "#5ec2a0", label: "Menthe" },
+  { id: "#6aa8e8", label: "Azur" },
+  { id: "#d96a5b", label: "Corail" },
+  { id: "#c4a1e8", label: "Lilas" },
+];
+
 export function formatCountdown(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -73,7 +113,6 @@ export function formatCountdown(totalSeconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-/** Client-side mirror of Rust parser for instant feedback. */
 export function parseDurationClient(input: string): number | null {
   const temps = input.trim().toLowerCase().replace(/\s+/g, "");
   if (!temps) return null;
@@ -93,4 +132,42 @@ export function parseDurationClient(input: string): number | null {
   const seconds = Number(match[3] || 0);
   const total = hours * 3600 + minutes * 60 + seconds;
   return total > 0 ? total : null;
+}
+
+export function emptyConditions(): SmartConditions {
+  return {
+    cpu_below_percent: null,
+    cpu_for_seconds: null,
+    process_closed: null,
+    idle_seconds: null,
+    target_unix: null,
+  };
+}
+
+export function hasConditions(c: SmartConditions): boolean {
+  return Boolean(
+    c.cpu_below_percent != null ||
+      (c.process_closed && c.process_closed.trim()) ||
+      c.idle_seconds != null ||
+      c.target_unix != null,
+  );
+}
+
+export function playBeep(stage: string) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = stage === "fire" ? 660 : stage === "1m" ? 520 : 440;
+    gain.gain.value = 0.05;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    osc.stop(ctx.currentTime + 0.4);
+    window.setTimeout(() => void ctx.close(), 500);
+  } catch {
+    /* ignore */
+  }
 }

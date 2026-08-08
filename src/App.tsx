@@ -1,48 +1,42 @@
 import { useEffect, useState, useTransition } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { enable as enableAutostart, disable as disableAutostart } from "@tauri-apps/plugin-autostart";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   activateLicense,
   cancelSchedule,
+  clearHistory,
   deactivateLicense,
   getLicense,
   getSchedule,
   getSettings,
   listProcesses,
   parseDuration,
+  rebindHotkeys,
   saveSettings,
   schedulePower,
+  setWidgetVisible,
 } from "./api";
 import {
+  ACCENT_OPTIONS,
   ACTION_OPTIONS,
+  emptyConditions,
   formatCountdown,
+  hasConditions,
   parseDurationClient,
+  playBeep,
+  type AlertPayload,
   type AppSettings,
   type LicenseInfo,
   type PowerAction,
+  type Profile,
   type ScheduleSnapshot,
   type SmartConditions,
 } from "./types";
 import "./App.css";
 
-type Panel = "main" | "confirm" | "settings" | "license";
-
-const emptyConditions = (): SmartConditions => ({
-  cpu_below_percent: null,
-  cpu_for_seconds: null,
-  process_closed: null,
-  idle_seconds: null,
-  target_unix: null,
-});
-
-function hasConditions(c: SmartConditions): boolean {
-  return Boolean(
-    c.cpu_below_percent != null ||
-      (c.process_closed && c.process_closed.trim()) ||
-      c.idle_seconds != null ||
-      c.target_unix != null,
-  );
-}
+type Panel = "main" | "confirm" | "settings" | "license" | "history" | "processes";
 
 function App() {
   const [panel, setPanel] = useState<Panel>("main");
@@ -56,7 +50,10 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [licenseInput, setLicenseInput] = useState("");
   const [processes, setProcesses] = useState<string[]>([]);
+  const [processFilter, setProcessFilter] = useState("");
   const [newPreset, setNewPreset] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const [pulse, setPulse] = useState(false);
 
@@ -67,7 +64,7 @@ function App() {
   const lastMinute = active && !schedule?.waitingForConditions && remaining <= 60;
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    const cleanups: Array<() => void> = [];
 
     (async () => {
       try {
@@ -81,17 +78,33 @@ function App() {
         setSchedule(sched);
         setDurationInput(s.lastDurationInput || "30m");
         setAction(s.lastAction || "shutdown");
-        unlisten = await listen<ScheduleSnapshot>("schedule-updated", (event) => {
-          startTransition(() => setSchedule(event.payload));
-        });
+        document.documentElement.style.setProperty("--accent", s.accent || "#e2a84a");
+
+        cleanups.push(
+          await listen<ScheduleSnapshot>("schedule-updated", (event) => {
+            startTransition(() => setSchedule(event.payload));
+          }),
+        );
+        cleanups.push(
+          await listen<AppSettings>("settings-updated", (event) => {
+            setSettings(event.payload);
+            document.documentElement.style.setProperty(
+              "--accent",
+              event.payload.accent || "#e2a84a",
+            );
+          }),
+        );
+        cleanups.push(
+          await listen<AlertPayload>("timer-alert", (event) => {
+            if (event.payload.sound) playBeep(event.payload.stage);
+          }),
+        );
       } catch (e) {
         setError(String(e));
       }
     })();
 
-    return () => {
-      unlisten?.();
-    };
+    return () => cleanups.forEach((fn) => fn());
   }, []);
 
   useEffect(() => {
@@ -104,24 +117,40 @@ function App() {
     return () => window.clearInterval(id);
   }, [lastMinute]);
 
-  async function refreshLicense() {
-    setLicense(await getLicense());
-  }
-
   async function persist(partial: Partial<AppSettings>) {
     if (!settings) return;
     const next = { ...settings, ...partial };
     const saved = await saveSettings(next);
     setSettings(saved);
-
+    if (partial.accent) {
+      document.documentElement.style.setProperty("--accent", partial.accent);
+    }
     if (partial.launchOnStartup !== undefined) {
       try {
         if (partial.launchOnStartup) await enableAutostart();
         else await disableAutostart();
       } catch {
-        /* autostart may fail without permissions */
+        /* ignore */
       }
     }
+    if (partial.hotkeyOpen !== undefined || partial.hotkeyCancel !== undefined) {
+      try {
+        await rebindHotkeys();
+      } catch (e) {
+        setError(String(e));
+      }
+    }
+    if (partial.widgetEnabled !== undefined) {
+      await setWidgetVisible(partial.widgetEnabled);
+    }
+  }
+
+  function applyProfile(p: Profile) {
+    setDurationInput(p.durationInput);
+    setAction(p.action);
+    setConditions({ ...emptyConditions(), ...p.conditions });
+    setShowConditions(hasConditions(p.conditions));
+    setError(null);
   }
 
   async function openConfirm() {
@@ -138,11 +167,7 @@ function App() {
       return;
     }
     try {
-      const seconds = await parseDuration(durationInput);
-      if (seconds <= 0 && !hasConditions(conditions)) {
-        setError("Le temps doit être supérieur à 0.");
-        return;
-      }
+      await parseDuration(durationInput);
       await persist({ lastAction: action, lastDurationInput: durationInput });
       setPanel("confirm");
     } catch (e) {
@@ -190,10 +215,17 @@ function App() {
     }
   }
 
+  async function openProcessPicker() {
+    setError(null);
+    setPanel("processes");
+    setProcessFilter("");
+    await loadProcesses();
+  }
+
   async function addPreset() {
     if (!settings || !newPreset.trim()) return;
     if (!isPro && settings.presets.length >= 4) {
-      setError("Version gratuite : 4 presets max. Passez Pro pour en ajouter.");
+      setError("Version gratuite : 4 presets max.");
       setPanel("license");
       return;
     }
@@ -201,16 +233,39 @@ function App() {
       setError("Preset invalide.");
       return;
     }
-    const presets = [...settings.presets, newPreset.trim().toLowerCase()];
-    await persist({ presets });
+    await persist({
+      presets: [...settings.presets, newPreset.trim().toLowerCase()],
+    });
     setNewPreset("");
+  }
+
+  async function saveCurrentAsProfile() {
+    if (!settings || !profileName.trim()) return;
+    if (!isPro && settings.profiles.length >= 3) {
+      setError("Version gratuite : 3 profils max.");
+      setPanel("license");
+      return;
+    }
+    const profile: Profile = {
+      id: `p-${Date.now()}`,
+      name: profileName.trim(),
+      durationInput,
+      action,
+      conditions: { ...conditions },
+    };
+    await persist({ profiles: [...settings.profiles, profile] });
+    setProfileName("");
+  }
+
+  async function removeProfile(id: string) {
+    if (!settings) return;
+    await persist({ profiles: settings.profiles.filter((p) => p.id !== id) });
   }
 
   async function onActivateLicense() {
     setError(null);
     try {
-      const info = await activateLicense(licenseInput);
-      setLicense(info);
+      setLicense(await activateLicense(licenseInput));
       setLicenseInput("");
       setPanel("main");
     } catch (e) {
@@ -218,9 +273,28 @@ function App() {
     }
   }
 
-  async function onDeactivateLicense() {
-    setLicense(await deactivateLicense());
+  async function checkForUpdates() {
+    setUpdateMsg("Vérification…");
+    try {
+      const update = await check();
+      if (!update) {
+        setUpdateMsg("Déjà à jour.");
+        return;
+      }
+      setUpdateMsg(`Mise à jour ${update.version}…`);
+      await update.downloadAndInstall();
+      setUpdateMsg("Installée — redémarrage…");
+      await relaunch();
+    } catch (e) {
+      setUpdateMsg(
+        "Updater pas encore branché (clé de signature / release). " + String(e),
+      );
+    }
   }
+
+  const filteredProcesses = processes.filter((p) =>
+    p.toLowerCase().includes(processFilter.toLowerCase()),
+  );
 
   const brand = (
     <header className="brand">
@@ -237,7 +311,6 @@ function App() {
       <div className="atmosphere" aria-hidden />
       <main className="shell">
         {brand}
-
         {error && <p className="error">{error}</p>}
 
         {panel === "main" && (
@@ -260,6 +333,23 @@ function App() {
             ) : (
               <>
                 <p className="eyebrow">Programmer une action</p>
+
+                {(settings?.profiles?.length ?? 0) > 0 && (
+                  <div className="profiles" role="group" aria-label="Profils">
+                    {settings!.profiles.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="chip profile"
+                        onClick={() => applyProfile(p)}
+                        title={`${p.durationInput} · ${p.action}`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="time-block">
                   <input
                     className="time-input"
@@ -303,17 +393,19 @@ function App() {
                   ))}
                 </div>
 
-                <button
-                  type="button"
-                  className="linkish"
-                  onClick={() => {
-                    setShowConditions((v) => !v);
-                    if (!showConditions) void loadProcesses();
-                  }}
-                >
-                  {showConditions ? "Masquer les conditions" : "Conditions intelligentes"}
-                  {!isPro ? " (Pro)" : ""}
-                </button>
+                <div className="row tight">
+                  <button type="button" className="linkish" onClick={openProcessPicker}>
+                    Fin de process…
+                  </button>
+                  <button
+                    type="button"
+                    className="linkish"
+                    onClick={() => setShowConditions((v) => !v)}
+                  >
+                    {showConditions ? "Masquer conditions" : "Conditions"}
+                    {!isPro ? " (Pro)" : ""}
+                  </button>
+                </div>
 
                 {showConditions && (
                   <div className="conditions enter">
@@ -355,7 +447,6 @@ function App() {
                     <label className="wide">
                       Quand le processus se ferme
                       <input
-                        list="process-list"
                         placeholder="ex. chrome.exe"
                         value={conditions.process_closed ?? ""}
                         onChange={(e) =>
@@ -365,11 +456,6 @@ function App() {
                           }))
                         }
                       />
-                      <datalist id="process-list">
-                        {processes.map((p) => (
-                          <option key={p} value={p} />
-                        ))}
-                      </datalist>
                     </label>
                     <label>
                       Inactivité (s)
@@ -396,7 +482,9 @@ function App() {
                           const v = e.target.value;
                           setConditions((c) => ({
                             ...c,
-                            target_unix: v ? Math.floor(new Date(v).getTime() / 1000) : null,
+                            target_unix: v
+                              ? Math.floor(new Date(v).getTime() / 1000)
+                              : null,
                           }));
                         }}
                       />
@@ -413,6 +501,9 @@ function App() {
             <nav className="footer-nav">
               <button type="button" className="ghost" onClick={() => setPanel("settings")}>
                 Réglages
+              </button>
+              <button type="button" className="ghost" onClick={() => setPanel("history")}>
+                Historique
               </button>
               <button type="button" className="ghost" onClick={() => setPanel("license")}>
                 Licence
@@ -443,9 +534,75 @@ function App() {
           </section>
         )}
 
+        {panel === "processes" && (
+          <section className="hero enter panel">
+            <p className="eyebrow">Fin de process</p>
+            <h2 className="confirm-title">Quand cette app se ferme</h2>
+            <input
+              className="time-input small"
+              value={processFilter}
+              onChange={(e) => setProcessFilter(e.target.value)}
+              placeholder="Filtrer…"
+            />
+            <div className="process-list">
+              {filteredProcesses.slice(0, 40).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className="process-item"
+                  onClick={() => {
+                    setConditions((c) => ({ ...c, process_closed: p }));
+                    setShowConditions(true);
+                    setPanel("main");
+                  }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            <button className="btn" onClick={() => setPanel("main")}>
+              Retour
+            </button>
+          </section>
+        )}
+
+        {panel === "history" && settings && (
+          <section className="hero enter panel">
+            <p className="eyebrow">Historique</p>
+            {settings.history.length === 0 ? (
+              <p className="hint">Aucune action pour l’instant.</p>
+            ) : (
+              <ul className="history-list">
+                {settings.history.map((h, i) => (
+                  <li key={`${h.atUnix}-${i}`}>
+                    <strong>{h.actionLabel}</strong>
+                    <span>
+                      {h.durationLabel}
+                      {h.cancelled ? " · annulé" : ""}
+                    </span>
+                    <em>{new Date(h.atUnix * 1000).toLocaleString()}</em>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="row">
+              <button
+                className="btn"
+                onClick={async () => setSettings(await clearHistory())}
+              >
+                Vider
+              </button>
+              <button className="btn" onClick={() => setPanel("main")}>
+                Retour
+              </button>
+            </div>
+          </section>
+        )}
+
         {panel === "settings" && settings && (
           <section className="hero enter panel">
             <p className="eyebrow">Réglages</p>
+
             <label className="toggle">
               <input
                 type="checkbox"
@@ -462,21 +619,71 @@ function App() {
               />
               Lancer au démarrage de Windows
             </label>
-            <label>
-              Notifier avant (secondes)
+            <label className="toggle">
               <input
-                type="number"
-                min={5}
-                max={600}
-                value={settings.notifyBeforeSeconds}
-                onChange={(e) =>
-                  void persist({ notifyBeforeSeconds: Number(e.target.value) || 60 })
-                }
+                type="checkbox"
+                checked={settings.widgetEnabled}
+                onChange={(e) => void persist({ widgetEnabled: e.target.checked })}
+              />
+              Mini-widget countdown (si timer actif)
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={settings.soundEnabled}
+                onChange={(e) => void persist({ soundEnabled: e.target.checked })}
+              />
+              Sons d’alerte
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={settings.notifyAt5m}
+                onChange={(e) => void persist({ notifyAt5m: e.target.checked })}
+              />
+              Notif à 5 minutes
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={settings.notifyAt1m}
+                onChange={(e) => void persist({ notifyAt1m: e.target.checked })}
+              />
+              Notif à 1 minute
+            </label>
+
+            <p className="hint">Accent</p>
+            <div className="presets">
+              {ACCENT_OPTIONS.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={`chip ${settings.accent === a.id ? "active" : ""}`}
+                  style={{ borderColor: a.id }}
+                  onClick={() => void persist({ accent: a.id })}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
+            <label>
+              Hotkey ouvrir
+              <input
+                value={settings.hotkeyOpen}
+                onChange={(e) => void persist({ hotkeyOpen: e.target.value })}
+              />
+            </label>
+            <label>
+              Hotkey annuler
+              <input
+                value={settings.hotkeyCancel}
+                onChange={(e) => void persist({ hotkeyCancel: e.target.value })}
               />
             </label>
 
             <div className="preset-edit">
-              <p className="hint">Presets</p>
+              <p className="hint">Presets durée</p>
               <div className="presets">
                 {settings.presets.map((p) => (
                   <button
@@ -488,7 +695,6 @@ function App() {
                         presets: settings.presets.filter((x) => x !== p),
                       })
                     }
-                    title="Supprimer"
                   >
                     {p} ×
                   </button>
@@ -506,6 +712,37 @@ function App() {
               </div>
             </div>
 
+            <div className="preset-edit">
+              <p className="hint">Sauver le setup actuel en profil</p>
+              <div className="row">
+                <input
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  placeholder="Fin de série"
+                />
+                <button className="btn" type="button" onClick={saveCurrentAsProfile}>
+                  Sauver
+                </button>
+              </div>
+              <div className="presets">
+                {settings.profiles.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="chip"
+                    onClick={() => void removeProfile(p.id)}
+                  >
+                    {p.name} ×
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button className="btn" type="button" onClick={checkForUpdates}>
+              Vérifier les mises à jour
+            </button>
+            {updateMsg && <p className="hint">{updateMsg}</p>}
+
             <button className="btn" onClick={() => setPanel("main")}>
               Retour
             </button>
@@ -517,9 +754,9 @@ function App() {
             <p className="eyebrow">Licence</p>
             <h2 className="confirm-title">{license?.message ?? "…"}</h2>
             <p className="hint">
-              Gratuit : arrêt, redémarrage, 4 presets.
+              Gratuit : arrêt, redémarrage, 4 presets, 3 profils.
               <br />
-              Pro : veille, hibernation, verrouillage, conditions, presets illimités.
+              Pro : veille, hibernation, verrouillage, conditions, plus de profils.
             </p>
             {!isPro ? (
               <>
@@ -536,11 +773,14 @@ function App() {
                 </button>
               </>
             ) : (
-              <button className="btn" onClick={onDeactivateLicense}>
+              <button
+                className="btn"
+                onClick={async () => setLicense(await deactivateLicense())}
+              >
                 Désactiver la licence
               </button>
             )}
-            <button className="btn" onClick={() => { void refreshLicense(); setPanel("main"); }}>
+            <button className="btn" onClick={() => setPanel("main")}>
               Retour
             </button>
           </section>

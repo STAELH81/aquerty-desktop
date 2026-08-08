@@ -45,10 +45,22 @@ export function cancelSchedule() {
   return invoke<ScheduleSnapshot>("cancel_schedule");
 }
 
+export function clearHistory() {
+  return invoke<AppSettings>("clear_history");
+}
+
 export function listProcesses() {
   return invoke<string[]>("list_processes");
 }
 
 export function parseDuration(input: string) {
   return invoke<number>("parse_duration", { input });
+}
+
+export function setWidgetVisible(visible: boolean) {
+  return invoke<void>("set_widget_visible", { visible });
+}
+
+export function rebindHotkeys() {
+  return invoke<void>("rebind_hotkeys");
 }

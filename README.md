@@ -42,6 +42,19 @@ Les installateurs sont générés dans `D:\aquerty-cargo-target\release\bundle\`
 - `Aquerty Stop_1.0.0_x64-setup.exe` (NSIS)
 - `Aquerty Stop_1.0.0_x64_en-US.msi`
 
+## Mises à jour auto
+
+L’app est prête pour `tauri-plugin-updater` via GitHub Releases :
+
+`https://github.com/STAELH81/aquerty-desktop/releases/latest/download/latest.json`
+
+Pour l’activer vraiment :
+
+1. `npm run tauri signer generate -w ~/.tauri/aquerty.key`
+2. Mettre la **pubkey** dans `src-tauri/tauri.conf.json`
+3. Passer `createUpdaterArtifacts` à `true`
+4. Publier une release signée sur GitHub
+
 ## Licence freemium
 
 - **Gratuit** : arrêt, redémarrage, 4 presets
