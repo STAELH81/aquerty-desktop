@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { enable as enableAutostart, disable as disableAutostart } from "@tauri-apps/plugin-autostart";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   activateLicense,
   cancelSchedule,
@@ -18,9 +19,13 @@ import {
   schedulePower,
   setWidgetVisible,
 } from "./api";
+import { COMMERCE } from "./commerce";
+import { actionLabel, dayLabel, t } from "./i18n";
 import {
   ACCENT_OPTIONS,
-  ACTION_OPTIONS,
+  ACTION_IDS,
+  PRO_ACTIONS,
+  defaultRecurringRule,
   emptyConditions,
   formatCountdown,
   hasConditions,
@@ -29,8 +34,10 @@ import {
   type AlertPayload,
   type AppSettings,
   type LicenseInfo,
+  type Locale,
   type PowerAction,
   type Profile,
+  type RecurringRule,
   type ScheduleSnapshot,
   type SmartConditions,
 } from "./types";
@@ -58,10 +65,14 @@ function App() {
   const [pulse, setPulse] = useState(false);
 
   const isPro = license?.isPro ?? false;
+  const locale: Locale = settings?.locale === "en" ? "en" : "fr";
   const parsedSeconds = parseDurationClient(durationInput);
   const active = schedule?.active ?? false;
+  const inGrace = schedule?.inGrace ?? false;
   const remaining = schedule?.remainingSeconds ?? 0;
-  const lastMinute = active && !schedule?.waitingForConditions && remaining <= 60;
+  const graceRemaining = schedule?.graceRemainingSeconds ?? 0;
+  const lastMinute =
+    active && !schedule?.waitingForConditions && !inGrace && remaining <= 60;
 
   useEffect(() => {
     const cleanups: Array<() => void> = [];
@@ -78,7 +89,10 @@ function App() {
         setSchedule(sched);
         setDurationInput(s.lastDurationInput || "30m");
         setAction(s.lastAction || "shutdown");
-        document.documentElement.style.setProperty("--accent", s.accent || "#e2a84a");
+        document.documentElement.style.setProperty(
+          "--accent",
+          lic.isPro ? s.accent || "#e2a84a" : "#e2a84a",
+        );
 
         if (s.autoCheckUpdates !== false) {
           window.setTimeout(() => {
@@ -94,10 +108,6 @@ function App() {
         cleanups.push(
           await listen<AppSettings>("settings-updated", (event) => {
             setSettings(event.payload);
-            document.documentElement.style.setProperty(
-              "--accent",
-              event.payload.accent || "#e2a84a",
-            );
           }),
         );
         cleanups.push(
@@ -123,8 +133,30 @@ function App() {
     return () => window.clearInterval(id);
   }, [lastMinute]);
 
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--accent",
+      isPro ? settings?.accent || "#e2a84a" : "#e2a84a",
+    );
+  }, [isPro, settings?.accent]);
+
   async function persist(partial: Partial<AppSettings>) {
     if (!settings) return;
+    if (partial.accent && !isPro) {
+      setError(t(locale, "themePro"));
+      setPanel("license");
+      return;
+    }
+    if (partial.wakeToExecute && !isPro) {
+      setError(t(locale, "wakePro"));
+      setPanel("license");
+      return;
+    }
+    if (partial.recurring && !isPro && partial.recurring.length > 1) {
+      setError(t(locale, "recurringPro"));
+      setPanel("license");
+      return;
+    }
     const next = { ...settings, ...partial };
     const saved = await saveSettings(next);
     setSettings(saved);
@@ -161,14 +193,13 @@ function App() {
 
   async function openConfirm() {
     setError(null);
-    const opt = ACTION_OPTIONS.find((a) => a.id === action);
-    if (opt?.pro && !isPro) {
-      setError("Veille, hibernation et verrouillage : version Pro.");
+    if (PRO_ACTIONS.includes(action) && !isPro) {
+      setError(t(locale, "powerPro"));
       setPanel("license");
       return;
     }
     if (hasConditions(conditions) && !isPro) {
-      setError("Conditions : version Pro.");
+      setError(t(locale, "conditionsPro"));
       setPanel("license");
       return;
     }
@@ -231,12 +262,12 @@ function App() {
   async function addPreset() {
     if (!settings || !newPreset.trim()) return;
     if (!isPro && settings.presets.length >= 4) {
-      setError("Version gratuite : 4 presets max.");
+      setError(t(locale, "freePresets"));
       setPanel("license");
       return;
     }
     if (parseDurationClient(newPreset) == null) {
-      setError("Preset invalide.");
+      setError(t(locale, "invalidPreset"));
       return;
     }
     await persist({
@@ -248,7 +279,7 @@ function App() {
   async function saveCurrentAsProfile() {
     if (!settings || !profileName.trim()) return;
     if (!isPro && settings.profiles.length >= 3) {
-      setError("Version gratuite : 3 profils max.");
+      setError(t(locale, "freeProfiles"));
       setPanel("license");
       return;
     }
@@ -268,10 +299,37 @@ function App() {
     await persist({ profiles: settings.profiles.filter((p) => p.id !== id) });
   }
 
+  function updateRecurring(next: RecurringRule[]) {
+    void persist({ recurring: next });
+  }
+
+  function patchRule(id: string, patch: Partial<RecurringRule>) {
+    if (!settings) return;
+    updateRecurring(
+      settings.recurring.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    );
+  }
+
+  function addRecurringRule() {
+    if (!settings) return;
+    if (!isPro && settings.recurring.length >= 1) {
+      setError(t(locale, "recurringPro"));
+      setPanel("license");
+      return;
+    }
+    updateRecurring([...settings.recurring, defaultRecurringRule(action)]);
+  }
+
+  function removeRecurringRule(id: string) {
+    if (!settings) return;
+    updateRecurring(settings.recurring.filter((r) => r.id !== id));
+  }
+
   async function onActivateLicense() {
     setError(null);
     try {
-      setLicense(await activateLicense(licenseInput));
+      const lic = await activateLicense(licenseInput);
+      setLicense(lic);
       setLicenseInput("");
       setPanel("main");
     } catch (e) {
@@ -281,20 +339,22 @@ function App() {
 
   async function checkForUpdates(opts?: { silent?: boolean }) {
     const silent = opts?.silent ?? false;
-    if (!silent) setUpdateMsg("Vérification…");
+    if (!silent) setUpdateMsg(t(locale, "checking"));
     try {
       const update = await check();
       if (!update) {
-        if (!silent) setUpdateMsg("Déjà à jour.");
+        if (!silent) setUpdateMsg(t(locale, "upToDate"));
         return;
       }
-      setUpdateMsg(`Mise à jour ${update.version} : installation…`);
+      setUpdateMsg(
+        `${t(locale, "updatePrefix")} ${update.version} : ${t(locale, "installing")}`,
+      );
       await update.downloadAndInstall();
-      setUpdateMsg("Installée, redémarrage…");
+      setUpdateMsg(t(locale, "installedRestart"));
       await relaunch();
     } catch (e) {
       if (!silent) {
-        setUpdateMsg("Impossible de vérifier les mises à jour. " + String(e));
+        setUpdateMsg(t(locale, "updateFail") + String(e));
       }
     }
   }
@@ -305,56 +365,71 @@ function App() {
 
   const brand = (
     <header className="brand">
-      <div className="brand-mark" aria-hidden />
+      <img className="brand-mark" src="/icon.png" alt="" width={42} height={42} />
       <div>
         <p className="brand-name">Aquerty Stop</p>
-        <p className="brand-tag">{isPro ? "Pro" : "Free"}</p>
+        <p className="brand-tag">{isPro ? t(locale, "brandPro") : t(locale, "brandFree")}</p>
       </div>
     </header>
   );
 
   return (
-    <div className={`app ${pulse ? "pulse" : ""}`}>
+    <div className={`app ${pulse ? "pulse" : ""} ${inGrace ? "in-grace" : ""}`}>
       <div className="atmosphere" aria-hidden />
       <main className="shell">
         {brand}
         {error && <p className="error">{error}</p>}
 
-        {panel === "main" && (
+        {inGrace && (
+          <div className="grace-banner enter" role="alert">
+            <p className="eyebrow">{t(locale, "graceOverlay")}</p>
+            <h1 className="countdown grace-count">
+              {formatCountdown(graceRemaining)}
+            </h1>
+            <p className="hint">{t(locale, "graceCancelHint")}</p>
+            <button className="btn danger" onClick={onCancel}>
+              {t(locale, "cancel")}
+            </button>
+          </div>
+        )}
+
+        {panel === "main" && !inGrace && (
           <section className="hero enter main-panel">
             {active ? (
               <>
                 <p className="eyebrow">
                   {schedule?.waitingForConditions
-                    ? "En attente des conditions"
-                    : schedule?.actionLabel}
+                    ? t(locale, "waitingConditions")
+                    : schedule?.fromRecurring
+                      ? t(locale, "recurringArmed")
+                      : schedule?.actionLabel}
                 </p>
                 <h1 className="countdown">{formatCountdown(remaining)}</h1>
                 {schedule?.conditionStatus && (
                   <p className="condition-line">{schedule.conditionStatus.summary}</p>
                 )}
                 <button className="btn danger" onClick={onCancel}>
-                  Annuler
+                  {t(locale, "cancel")}
                 </button>
                 <nav className="footer-nav">
                   <button type="button" className="ghost" onClick={() => setPanel("settings")}>
-                    Réglages
+                    {t(locale, "settings")}
                   </button>
                   <button type="button" className="ghost" onClick={() => setPanel("history")}>
-                    Historique
+                    {t(locale, "history")}
                   </button>
                   <button type="button" className="ghost" onClick={() => setPanel("license")}>
-                    Licence
+                    {t(locale, "license")}
                   </button>
                 </nav>
               </>
             ) : (
               <>
                 <div className="main-scroll">
-                  <p className="eyebrow">Programmer une action</p>
+                  <p className="eyebrow">{t(locale, "scheduleAction")}</p>
 
                   {(settings?.profiles?.length ?? 0) > 0 && (
-                    <div className="profiles" role="group" aria-label="Profils">
+                    <div className="profiles" role="group" aria-label={t(locale, "profiles")}>
                       {settings!.profiles.map((p) => (
                         <button
                           key={p.id}
@@ -376,16 +451,16 @@ function App() {
                       onChange={(e) => setDurationInput(e.target.value)}
                       placeholder="1h20m"
                       spellCheck={false}
-                      aria-label="Durée"
+                      aria-label="Duration"
                     />
                     <p className="hint">
                       {parsedSeconds != null
                         ? `= ${formatCountdown(parsedSeconds)}`
-                        : "Ex. 30s, 45m, 2h, 1h20m"}
+                        : t(locale, "durationHint")}
                     </p>
                   </div>
 
-                  <div className="presets" role="group" aria-label="Presets">
+                  <div className="presets" role="group" aria-label={t(locale, "presets")}>
                     {(settings?.presets ?? []).map((p) => (
                       <button
                         key={p}
@@ -399,37 +474,41 @@ function App() {
                   </div>
 
                   <div className="actions" role="group" aria-label="Action">
-                    {ACTION_OPTIONS.map((opt) => (
+                    {ACTION_IDS.map((id) => (
                       <button
-                        key={opt.id}
+                        key={id}
                         type="button"
-                        className={`action ${action === opt.id ? "active" : ""}`}
-                        onClick={() => setAction(opt.id)}
+                        className={`action ${action === id ? "active" : ""}`}
+                        onClick={() => setAction(id)}
                       >
-                        {opt.label}
-                        {opt.pro && !isPro ? <span className="pro-dot">Pro</span> : null}
+                        {actionLabel(locale, id)}
+                        {PRO_ACTIONS.includes(id) && !isPro ? (
+                          <span className="pro-dot">Pro</span>
+                        ) : null}
                       </button>
                     ))}
                   </div>
 
                   <div className="row tight">
                     <button type="button" className="linkish" onClick={openProcessPicker}>
-                      Fin de process…
+                      {t(locale, "endOfProcess")}
                     </button>
                     <button
                       type="button"
                       className="linkish"
                       onClick={() => setShowConditions((v) => !v)}
                     >
-                      {showConditions ? "Masquer conditions" : "Conditions"}
-                      {!isPro ? " (Pro)" : ""}
+                      {showConditions
+                        ? t(locale, "hideConditions")
+                        : t(locale, "conditions")}
+                      {!isPro ? t(locale, "proSuffix") : ""}
                     </button>
                   </div>
 
                   {showConditions && (
                     <div className="conditions enter">
                       <label>
-                        CPU sous
+                        {t(locale, "cpuBelow")}
                         <input
                           type="number"
                           min={1}
@@ -447,7 +526,7 @@ function App() {
                         />
                       </label>
                       <label>
-                        pendant (s)
+                        {t(locale, "forSeconds")}
                         <input
                           type="number"
                           min={1}
@@ -464,7 +543,7 @@ function App() {
                         />
                       </label>
                       <label className="wide">
-                        Quand le processus se ferme
+                        {t(locale, "whenProcessCloses")}
                         <input
                           placeholder="ex. chrome.exe"
                           value={conditions.process_closed ?? ""}
@@ -477,7 +556,7 @@ function App() {
                         />
                       </label>
                       <label>
-                        Inactivité (s)
+                        {t(locale, "idleSeconds")}
                         <input
                           type="number"
                           min={1}
@@ -494,7 +573,7 @@ function App() {
                         />
                       </label>
                       <label className="wide">
-                        Heure cible
+                        {t(locale, "targetTime")}
                         <input
                           type="datetime-local"
                           onChange={(e) => {
@@ -512,19 +591,19 @@ function App() {
                   )}
 
                   <button className="btn primary" onClick={openConfirm}>
-                    Continuer
+                    {t(locale, "continue")}
                   </button>
                 </div>
 
                 <nav className="footer-nav">
                   <button type="button" className="ghost" onClick={() => setPanel("settings")}>
-                    Réglages
+                    {t(locale, "settings")}
                   </button>
                   <button type="button" className="ghost" onClick={() => setPanel("history")}>
-                    Historique
+                    {t(locale, "history")}
                   </button>
                   <button type="button" className="ghost" onClick={() => setPanel("license")}>
-                    Licence
+                    {t(locale, "license")}
                   </button>
                 </nav>
               </>
@@ -534,21 +613,21 @@ function App() {
 
         {panel === "confirm" && (
           <section className="hero enter">
-            <p className="eyebrow">Confirmation</p>
+            <p className="eyebrow">{t(locale, "confirmation")}</p>
             <h2 className="confirm-title">
-              {ACTION_OPTIONS.find((a) => a.id === action)?.label} dans{" "}
+              {actionLabel(locale, action)} {t(locale, "in")}{" "}
               {formatCountdown(parsedSeconds ?? 0)}
             </h2>
             <p className="hint">
-              Temps demandé : <strong>{durationInput}</strong>
-              {hasConditions(conditions) ? " · avec conditions" : ""}
+              {t(locale, "requestedTime")} <strong>{durationInput}</strong>
+              {hasConditions(conditions) ? t(locale, "withConditions") : ""}
             </p>
             <div className="row">
               <button className="btn primary" onClick={confirmSchedule}>
-                Confirmer
+                {t(locale, "confirm")}
               </button>
               <button className="btn" onClick={() => setPanel("main")}>
-                Retour
+                {t(locale, "back")}
               </button>
             </div>
           </section>
@@ -556,13 +635,13 @@ function App() {
 
         {panel === "processes" && (
           <section className="hero enter panel">
-            <p className="eyebrow">Fin de process</p>
-            <h2 className="confirm-title">Quand cette app se ferme</h2>
+            <p className="eyebrow">{t(locale, "endOfProcessTitle")}</p>
+            <h2 className="confirm-title">{t(locale, "whenAppCloses")}</h2>
             <input
               className="time-input small"
               value={processFilter}
               onChange={(e) => setProcessFilter(e.target.value)}
-              placeholder="Filtrer…"
+              placeholder={t(locale, "filter")}
             />
             <div className="process-list">
               {filteredProcesses.slice(0, 40).map((p) => (
@@ -581,16 +660,16 @@ function App() {
               ))}
             </div>
             <button className="btn" onClick={() => setPanel("main")}>
-              Retour
+              {t(locale, "back")}
             </button>
           </section>
         )}
 
         {panel === "history" && settings && (
           <section className="hero enter panel">
-            <p className="eyebrow">Historique</p>
+            <p className="eyebrow">{t(locale, "history")}</p>
             {settings.history.length === 0 ? (
-              <p className="hint">Aucune action pour l’instant.</p>
+              <p className="hint">{t(locale, "noHistory")}</p>
             ) : (
               <ul className="history-list">
                 {settings.history.map((h, i) => (
@@ -598,7 +677,7 @@ function App() {
                     <strong>{h.actionLabel}</strong>
                     <span>
                       {h.durationLabel}
-                      {h.cancelled ? " · annulé" : ""}
+                      {h.cancelled ? t(locale, "cancelled") : ""}
                     </span>
                     <em>{new Date(h.atUnix * 1000).toLocaleString()}</em>
                   </li>
@@ -606,14 +685,16 @@ function App() {
               </ul>
             )}
             <div className="row">
-              <button
-                className="btn"
-                onClick={async () => setSettings(await clearHistory())}
-              >
-                Vider
-              </button>
+              {settings.history.length > 0 && (
+                <button
+                  className="btn"
+                  onClick={async () => setSettings(await clearHistory())}
+                >
+                  {t(locale, "clearHistory")}
+                </button>
+              )}
               <button className="btn" onClick={() => setPanel("main")}>
-                Retour
+                {t(locale, "back")}
               </button>
             </div>
           </section>
@@ -622,18 +703,39 @@ function App() {
         {panel === "settings" && settings && (
           <section className="hero enter panel settings-panel">
             <div className="settings-header">
-              <p className="eyebrow">Réglages</p>
-              <h2 className="confirm-title settings-title">Préférences</h2>
+              <p className="eyebrow">{t(locale, "settings")}</p>
+              <h2 className="confirm-title settings-title">{t(locale, "preferences")}</h2>
             </div>
 
             <div className="settings-scroll">
               <div className="settings-section">
-                <h3 className="settings-heading">Général</h3>
-                <p className="settings-desc">Comportement de la fenêtre et du démarrage.</p>
+                <h3 className="settings-heading">{t(locale, "language")}</h3>
+                <p className="settings-desc">{t(locale, "languageDesc")}</p>
+                <div className="presets">
+                  <button
+                    type="button"
+                    className={`chip ${locale === "fr" ? "active" : ""}`}
+                    onClick={() => void persist({ locale: "fr" })}
+                  >
+                    {t(locale, "french")}
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip ${locale === "en" ? "active" : ""}`}
+                    onClick={() => void persist({ locale: "en" })}
+                  >
+                    {t(locale, "english")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">{t(locale, "general")}</h3>
+                <p className="settings-desc">{t(locale, "generalDesc")}</p>
                 <label className="toggle-row">
                   <span>
-                    <strong>Réduire dans le tray</strong>
-                    <small>La fenêtre se cache, l'app reste ouverte</small>
+                    <strong>{t(locale, "minimizeTray")}</strong>
+                    <small>{t(locale, "minimizeTrayHint")}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -643,8 +745,8 @@ function App() {
                 </label>
                 <label className="toggle-row">
                   <span>
-                    <strong>Lancer au démarrage</strong>
-                    <small>Démarre avec Windows</small>
+                    <strong>{t(locale, "launchStartup")}</strong>
+                    <small>{t(locale, "launchStartupHint")}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -654,8 +756,8 @@ function App() {
                 </label>
                 <label className="toggle-row">
                   <span>
-                    <strong>Mini-widget</strong>
-                    <small>Compteur flottant pendant un timer</small>
+                    <strong>{t(locale, "miniWidget")}</strong>
+                    <small>{t(locale, "miniWidgetHint")}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -666,12 +768,12 @@ function App() {
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Alertes</h3>
-                <p className="settings-desc">Sons et notifications avant l’action.</p>
+                <h3 className="settings-heading">{t(locale, "alerts")}</h3>
+                <p className="settings-desc">{t(locale, "alertsDesc")}</p>
                 <label className="toggle-row">
                   <span>
-                    <strong>Sons d’alerte</strong>
-                    <small>Son avant l'action</small>
+                    <strong>{t(locale, "alertSounds")}</strong>
+                    <small>{t(locale, "alertSoundsHint")}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -681,7 +783,7 @@ function App() {
                 </label>
                 <label className="toggle-row">
                   <span>
-                    <strong>Notification à 5 minutes</strong>
+                    <strong>{t(locale, "notify5m")}</strong>
                   </span>
                   <input
                     type="checkbox"
@@ -691,7 +793,7 @@ function App() {
                 </label>
                 <label className="toggle-row">
                   <span>
-                    <strong>Notification à 1 minute</strong>
+                    <strong>{t(locale, "notify1m")}</strong>
                   </span>
                   <input
                     type="checkbox"
@@ -702,31 +804,189 @@ function App() {
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Apparence</h3>
-                <p className="settings-desc">Couleur d’accent de l’interface.</p>
+                <h3 className="settings-heading">{t(locale, "grace")}</h3>
+                <p className="settings-desc">{t(locale, "graceDesc")}</p>
+                <label className="toggle-row">
+                  <span>
+                    <strong>{t(locale, "graceEnabled")}</strong>
+                    <small>{t(locale, "graceEnabledHint")}</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.graceEnabled !== false}
+                    onChange={(e) => void persist({ graceEnabled: e.target.checked })}
+                  />
+                </label>
+                <label className="field">
+                  {t(locale, "graceSeconds")}
+                  <input
+                    type="number"
+                    min={1}
+                    max={600}
+                    value={settings.graceSeconds ?? 30}
+                    onChange={(e) =>
+                      void persist({
+                        graceSeconds: Math.min(
+                          600,
+                          Math.max(1, Number(e.target.value) || 30),
+                        ),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">
+                  {t(locale, "wake")} {!isPro ? <span className="pro-dot">Pro</span> : null}
+                </h3>
+                <p className="settings-desc">{t(locale, "wakeDesc")}</p>
+                <label className={`toggle-row ${!isPro ? "locked" : ""}`}>
+                  <span>
+                    <strong>{t(locale, "wakeToggle")}</strong>
+                    <small>{t(locale, "wakeHint")}</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={!!settings.wakeToExecute && isPro}
+                    onChange={(e) => {
+                      if (!isPro) {
+                        setError(t(locale, "wakePro"));
+                        setPanel("license");
+                        return;
+                      }
+                      void persist({ wakeToExecute: e.target.checked });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">{t(locale, "recurring")}</h3>
+                <p className="settings-desc">
+                  {t(locale, "recurringDesc")} {t(locale, "recurringFreeHint")}
+                </p>
+                {schedule?.nextRecurringUnix ? (
+                  <p className="hint">
+                    {t(locale, "nextAt")}{" "}
+                    {new Date(schedule.nextRecurringUnix * 1000).toLocaleString()}
+                  </p>
+                ) : null}
+                {(settings.recurring ?? []).map((rule) => (
+                  <div key={rule.id} className="recurring-card">
+                    <label className="toggle-row">
+                      <span>
+                        <strong>{t(locale, "enabled")}</strong>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={rule.enabled}
+                        onChange={(e) =>
+                          patchRule(rule.id, { enabled: e.target.checked })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      {t(locale, "time")}
+                      <input
+                        type="time"
+                        value={`${String(rule.hour).padStart(2, "0")}:${String(rule.minute).padStart(2, "0")}`}
+                        onChange={(e) => {
+                          const [h, m] = e.target.value.split(":").map(Number);
+                          patchRule(rule.id, {
+                            hour: h || 0,
+                            minute: m || 0,
+                          });
+                        }}
+                      />
+                    </label>
+                    <p className="settings-desc">{t(locale, "days")}</p>
+                    <div className="day-row">
+                      {rule.days.map((on, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className={`chip day-chip ${on ? "active" : ""}`}
+                          onClick={() => {
+                            const days = [...rule.days];
+                            days[i] = !days[i];
+                            patchRule(rule.id, { days });
+                          }}
+                        >
+                          {dayLabel(locale, i)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="actions compact">
+                      {ACTION_IDS.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`action ${rule.action === id ? "active" : ""}`}
+                          onClick={() => {
+                            if (PRO_ACTIONS.includes(id) && !isPro) {
+                              setError(t(locale, "powerPro"));
+                              setPanel("license");
+                              return;
+                            }
+                            patchRule(rule.id, { action: id });
+                          }}
+                        >
+                          {actionLabel(locale, id)}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={() => removeRecurringRule(rule.id)}
+                    >
+                      {t(locale, "remove")}
+                    </button>
+                  </div>
+                ))}
+                <button className="btn" type="button" onClick={addRecurringRule}>
+                  {t(locale, "addRule")}
+                  {!isPro && (settings.recurring?.length ?? 0) >= 1 ? (
+                    <span className="pro-dot">Pro</span>
+                  ) : null}
+                </button>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-heading">
+                  {t(locale, "appearance")}{" "}
+                  {!isPro ? <span className="pro-dot">Pro</span> : null}
+                </h3>
+                <p className="settings-desc">{t(locale, "appearanceDesc")}</p>
                 <div className="presets accent-row">
                   {ACCENT_OPTIONS.map((a) => (
                     <button
                       key={a.id}
                       type="button"
-                      className={`chip accent-chip ${settings.accent === a.id ? "active" : ""}`}
+                      className={`chip accent-chip ${settings.accent === a.id ? "active" : ""} ${!isPro ? "locked" : ""}`}
                       style={{ ["--chip-accent" as string]: a.id }}
-                      onClick={() => void persist({ accent: a.id })}
+                      onClick={() => {
+                        if (!isPro) {
+                          setError(t(locale, "themePro"));
+                          setPanel("license");
+                          return;
+                        }
+                        void persist({ accent: a.id });
+                      }}
                     >
                       <span className="accent-dot" style={{ background: a.id }} />
-                      {a.label}
+                      {t(locale, a.labelKey)}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Raccourcis clavier</h3>
-                <p className="settings-desc">
-                  Exemple : <code>CommandOrControl+Shift+A</code>
-                </p>
+                <h3 className="settings-heading">{t(locale, "hotkeys")}</h3>
+                <p className="settings-desc">{t(locale, "hotkeysDesc")}</p>
                 <label className="field">
-                  Ouvrir la fenêtre
+                  {t(locale, "hotkeyOpen")}
                   <input
                     defaultValue={settings.hotkeyOpen}
                     key={`open-${settings.hotkeyOpen}`}
@@ -737,28 +997,29 @@ function App() {
                   />
                 </label>
                 <label className="field">
-                  Annuler l’action en cours
+                  {t(locale, "hotkeyCancel")}
                   <input
                     defaultValue={settings.hotkeyCancel}
                     key={`cancel-${settings.hotkeyCancel}`}
                     onBlur={(e) => {
                       const v = e.target.value.trim();
-                      if (v && v !== settings.hotkeyCancel) void persist({ hotkeyCancel: v });
+                      if (v && v !== settings.hotkeyCancel)
+                        void persist({ hotkeyCancel: v });
                     }}
                   />
                 </label>
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Presets de durée</h3>
-                <p className="settings-desc">Boutons sous le champ de durée.</p>
+                <h3 className="settings-heading">{t(locale, "presets")}</h3>
+                <p className="settings-desc">{t(locale, "presetsDesc")}</p>
                 <div className="presets">
                   {settings.presets.map((p) => (
                     <button
                       key={p}
                       type="button"
                       className="chip"
-                      title="Supprimer"
+                      title={t(locale, "remove")}
                       onClick={() =>
                         void persist({
                           presets: settings.presets.filter((x) => x !== p),
@@ -776,23 +1037,21 @@ function App() {
                     placeholder="45m"
                   />
                   <button className="btn" type="button" onClick={addPreset}>
-                    Ajouter
+                    {t(locale, "add")}
                   </button>
                 </div>
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Profils 1-clic</h3>
-                <p className="settings-desc">
-                  Enregistre durée, action et conditions pour un rappel rapide.
-                </p>
+                <h3 className="settings-heading">{t(locale, "profiles")}</h3>
+                <p className="settings-desc">{t(locale, "profilesDesc")}</p>
                 <div className="presets">
                   {settings.profiles.map((p) => (
                     <button
                       key={p.id}
                       type="button"
                       className="chip profile"
-                      title="Supprimer"
+                      title={t(locale, "remove")}
                       onClick={() => void removeProfile(p.id)}
                     >
                       {p.name} ×
@@ -803,23 +1062,21 @@ function App() {
                   <input
                     value={profileName}
                     onChange={(e) => setProfileName(e.target.value)}
-                    placeholder="Fin de série"
+                    placeholder={t(locale, "profilePlaceholder")}
                   />
                   <button className="btn" type="button" onClick={saveCurrentAsProfile}>
-                    Sauver
+                    {t(locale, "save")}
                   </button>
                 </div>
               </div>
 
               <div className="settings-section">
-                <h3 className="settings-heading">Mises à jour auto</h3>
-                <p className="settings-desc">
-                  Mise à jour depuis les releases GitHub.
-                </p>
+                <h3 className="settings-heading">{t(locale, "updates")}</h3>
+                <p className="settings-desc">{t(locale, "updatesDesc")}</p>
                 <label className="toggle-row">
                   <span>
-                    <strong>Vérifier au démarrage</strong>
-                    <small>Contrôle une nouvelle version au lancement</small>
+                    <strong>{t(locale, "checkOnLaunch")}</strong>
+                    <small>{t(locale, "checkOnLaunchHint")}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -834,7 +1091,7 @@ function App() {
                   type="button"
                   onClick={() => void checkForUpdates()}
                 >
-                  Vérifier maintenant
+                  {t(locale, "checkNow")}
                 </button>
                 {updateMsg && <p className="hint">{updateMsg}</p>}
               </div>
@@ -842,7 +1099,7 @@ function App() {
 
             <div className="settings-footer">
               <button className="btn" onClick={() => setPanel("main")}>
-                Retour
+                {t(locale, "back")}
               </button>
             </div>
           </section>
@@ -850,15 +1107,32 @@ function App() {
 
         {panel === "license" && (
           <section className="hero enter panel">
-            <p className="eyebrow">Licence</p>
+            <p className="eyebrow">{t(locale, "license")}</p>
             <h2 className="confirm-title">{license?.message ?? "…"}</h2>
             <p className="hint">
-              Gratuit : arrêt, redémarrage, 4 presets, 3 profils.
+              {t(locale, "freeLicense")}
               <br />
-              Pro : veille, hibernation, verrouillage, conditions, plus de profils.
+              {t(locale, "proLicense")}
             </p>
             {!isPro ? (
               <>
+                <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => void openUrl(COMMERCE.gumroadLifetime)}
+                  >
+                    {t(locale, "buyLifetime")}
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void openUrl(COMMERCE.gumroadAnnual)}
+                  >
+                    {t(locale, "buyAnnual")}
+                  </button>
+                </div>
+                <p className="hint">{t(locale, "pasteKeyHint")}</p>
                 <input
                   className="time-input small"
                   value={licenseInput}
@@ -866,9 +1140,8 @@ function App() {
                   placeholder="AQUERTY-…"
                   spellCheck={false}
                 />
-                <p className="hint">Demo : AQUERTY-PRO-DEMO-2026</p>
                 <button className="btn primary" onClick={onActivateLicense}>
-                  Activer Pro
+                  {t(locale, "activatePro")}
                 </button>
               </>
             ) : (
@@ -876,11 +1149,11 @@ function App() {
                 className="btn"
                 onClick={async () => setLicense(await deactivateLicense())}
               >
-                Désactiver la licence
+                {t(locale, "deactivateLicense")}
               </button>
             )}
             <button className="btn" onClick={() => setPanel("main")}>
-              Retour
+              {t(locale, "back")}
             </button>
           </section>
         )}

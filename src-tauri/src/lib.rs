@@ -1,15 +1,22 @@
 ﻿mod conditions;
+mod i18n;
 mod license;
 mod power;
 mod settings;
+mod wake;
 
-use chrono::Utc;
+pub use license::{
+    default_annual_expiry as license_default_annual_expiry,
+    generate_annual as license_generate_annual, generate_lifetime as license_generate_lifetime,
+};
+
+use chrono::{Datelike, Local, TimeZone, Utc};
 use conditions::ConditionTracker;
 use license::LicenseInfo;
 use parking_lot::Mutex;
 use power::{PowerAction, SmartConditions};
 use serde::{Deserialize, Serialize};
-use settings::{AppSettings, HistoryEntry};
+use settings::{AppSettings, HistoryEntry, Locale, RecurringRule};
 use std::time::Duration;
 use sysinfo::System;
 use tauri::menu::{Menu, MenuItem};
@@ -19,6 +26,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
+use wake::WakeTimer;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +40,10 @@ pub struct ScheduleSnapshot {
     pub conditions: SmartConditions,
     pub condition_status: Option<power::ConditionStatus>,
     pub waiting_for_conditions: bool,
+    pub in_grace: bool,
+    pub grace_remaining_seconds: u64,
+    pub from_recurring: bool,
+    pub next_recurring_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +64,9 @@ struct ActiveSchedule {
     notified_1m: bool,
     notified_soon: bool,
     waiting_for_conditions: bool,
+    grace_ends_at_unix: Option<i64>,
+    notified_grace: bool,
+    from_recurring_id: Option<String>,
 }
 
 struct AppStateInner {
@@ -60,6 +75,7 @@ struct AppStateInner {
     tracker: ConditionTracker,
     system: System,
     last_condition_status: Option<power::ConditionStatus>,
+    wake: WakeTimer,
 }
 
 pub struct AppState(Mutex<AppStateInner>);
@@ -73,6 +89,7 @@ impl AppState {
             tracker: ConditionTracker::default(),
             system: System::new_all(),
             last_condition_status: None,
+            wake: WakeTimer::new(),
         }))
     }
 }
@@ -81,26 +98,98 @@ fn is_pro(settings: &AppSettings) -> bool {
     license::info_from_key(settings.license_key.as_deref()).is_pro
 }
 
-fn ensure_allowed(action: PowerAction, conditions: &SmartConditions, pro: bool) -> Result<(), String> {
+fn locale_of(settings: &AppSettings) -> Locale {
+    settings.locale.clone()
+}
+
+fn ensure_allowed(
+    action: PowerAction,
+    conditions: &SmartConditions,
+    pro: bool,
+    locale: &Locale,
+) -> Result<(), String> {
     if action.requires_pro() && !pro {
-        return Err(
-            "Fonction Pro : veille, hibernation et verrouillage."
-                .into(),
-        );
+        return Err(i18n::msg(locale, "pro_power"));
     }
     if conditions.requires_pro() && !pro {
-        return Err(
-            "Fonction Pro : conditions réservées à la licence Pro.".into(),
-        );
+        return Err(i18n::msg(locale, "pro_conditions"));
     }
     Ok(())
 }
 
+fn next_occurrence_unix(rule: &RecurringRule, after_unix: i64) -> Option<i64> {
+    if !rule.enabled {
+        return None;
+    }
+    if rule.hour > 23 || rule.minute > 59 {
+        return None;
+    }
+    if !rule.days.iter().any(|d| *d) {
+        return None;
+    }
+
+    let after = Local.timestamp_opt(after_unix, 0).single()?;
+    for offset in 0..8 {
+        let day = after.date_naive() + chrono::Duration::days(offset);
+        let weekday = day.weekday().num_days_from_monday() as usize;
+        if weekday >= 7 || !rule.days[weekday] {
+            continue;
+        }
+        let candidate = day
+            .and_hms_opt(rule.hour, rule.minute, 0)
+            .and_then(|naive| Local.from_local_datetime(&naive).single())?;
+        if candidate.timestamp() > after_unix {
+            return Some(candidate.timestamp());
+        }
+    }
+    None
+}
+
+fn find_next_recurring(settings: &AppSettings, after_unix: i64) -> Option<(RecurringRule, i64)> {
+    let mut best: Option<(RecurringRule, i64)> = None;
+    for rule in &settings.recurring {
+        if let Some(ts) = next_occurrence_unix(rule, after_unix) {
+            match &best {
+                None => best = Some((rule.clone(), ts)),
+                Some((_, bts)) if ts < *bts => best = Some((rule.clone(), ts)),
+                _ => {}
+            }
+        }
+    }
+    best
+}
+
+fn sync_wake(inner: &AppStateInner) {
+    let pro = is_pro(&inner.settings);
+    if !pro || !inner.settings.wake_to_execute {
+        inner.wake.clear();
+        return;
+    }
+    if let Some(schedule) = &inner.schedule {
+        let target = schedule
+            .grace_ends_at_unix
+            .unwrap_or(schedule.ends_at_unix);
+        inner.wake.arm_at_unix(target);
+    } else if let Some((_, ts)) = find_next_recurring(&inner.settings, Utc::now().timestamp()) {
+        inner.wake.arm_at_unix(ts);
+    } else {
+        inner.wake.clear();
+    }
+}
+
 fn snapshot_from(inner: &AppStateInner) -> ScheduleSnapshot {
     let now = Utc::now().timestamp();
+    let locale = locale_of(&inner.settings);
+    let next_recurring_unix = find_next_recurring(&inner.settings, now).map(|(_, ts)| ts);
+
     match &inner.schedule {
         Some(s) => {
-            let remaining = if s.waiting_for_conditions {
+            let in_grace = s.grace_ends_at_unix.is_some();
+            let grace_remaining = s
+                .grace_ends_at_unix
+                .map(|g| (g - now).max(0) as u64)
+                .unwrap_or(0);
+            let remaining = if s.waiting_for_conditions || in_grace {
                 0
             } else {
                 (s.ends_at_unix - now).max(0) as u64
@@ -108,13 +197,17 @@ fn snapshot_from(inner: &AppStateInner) -> ScheduleSnapshot {
             ScheduleSnapshot {
                 active: true,
                 action: Some(s.action),
-                action_label: Some(s.action.label().into()),
+                action_label: Some(i18n::action_label(&locale, s.action).into()),
                 remaining_seconds: remaining,
                 total_seconds: s.total_seconds,
                 ends_at_unix: Some(s.ends_at_unix),
                 conditions: s.conditions.clone(),
                 condition_status: inner.last_condition_status.clone(),
                 waiting_for_conditions: s.waiting_for_conditions,
+                in_grace,
+                grace_remaining_seconds: grace_remaining,
+                from_recurring: s.from_recurring_id.is_some(),
+                next_recurring_unix,
             }
         }
         None => ScheduleSnapshot {
@@ -127,6 +220,10 @@ fn snapshot_from(inner: &AppStateInner) -> ScheduleSnapshot {
             conditions: SmartConditions::default(),
             condition_status: None,
             waiting_for_conditions: false,
+            in_grace: false,
+            grace_remaining_seconds: 0,
+            from_recurring: false,
+            next_recurring_unix,
         },
     }
 }
@@ -160,34 +257,87 @@ fn sync_widget(app: &AppHandle, settings: &AppSettings, snap: &ScheduleSnapshot)
     }
 }
 
+fn arm_recurring_if_idle(inner: &mut AppStateInner) {
+    arm_recurring_after(inner, Utc::now().timestamp());
+}
+
+fn arm_recurring_after(inner: &mut AppStateInner, after_unix: i64) {
+    if inner.schedule.is_some() {
+        return;
+    }
+    let Some((rule, ends_at)) = find_next_recurring(&inner.settings, after_unix) else {
+        sync_wake(inner);
+        return;
+    };
+    let now = Utc::now().timestamp();
+    let total = (ends_at - now).max(1) as u64;
+    inner.tracker = ConditionTracker::default();
+    inner.last_condition_status = None;
+    inner.schedule = Some(ActiveSchedule {
+        action: rule.action,
+        total_seconds: total,
+        ends_at_unix: ends_at,
+        conditions: SmartConditions::default(),
+        notified_5m: false,
+        notified_1m: false,
+        notified_soon: false,
+        waiting_for_conditions: false,
+        grace_ends_at_unix: None,
+        notified_grace: false,
+        from_recurring_id: Some(rule.id),
+    });
+    sync_wake(inner);
+}
+
 fn do_cancel(app: &AppHandle, state: &AppState) -> ScheduleSnapshot {
     power::cancel_windows_shutdown();
     let mut inner = state.0.lock();
+    let locale = locale_of(&inner.settings);
+    let mut skip_recurring_after: Option<i64> = None;
     if let Some(schedule) = inner.schedule.take() {
-        let elapsed = schedule
-            .total_seconds
-            .saturating_sub((schedule.ends_at_unix - Utc::now().timestamp()).max(0) as u64);
+        if schedule.from_recurring_id.is_some() {
+            skip_recurring_after = Some(schedule.ends_at_unix);
+        }
         settings::push_history(
             &mut inner.settings,
             HistoryEntry {
                 at_unix: Utc::now().timestamp(),
                 action: schedule.action,
-                action_label: schedule.action.label().into(),
+                action_label: i18n::action_label(&locale, schedule.action).into(),
                 duration_seconds: schedule.total_seconds,
                 duration_label: format_duration_label(schedule.total_seconds),
                 cancelled: true,
             },
         );
-        let _ = elapsed;
         let _ = settings::save(&inner.settings);
     }
     inner.last_condition_status = None;
     inner.tracker = ConditionTracker::default();
+    let after = skip_recurring_after.unwrap_or_else(|| Utc::now().timestamp());
+    arm_recurring_after(&mut inner, after);
     let snap = snapshot_from(&inner);
     sync_widget(app, &inner.settings, &snap);
     let _ = app.emit("schedule-updated", &snap);
     let _ = app.emit("settings-updated", &inner.settings);
     snap
+}
+
+fn validate_recurring(settings: &mut AppSettings, pro: bool, locale: &Locale) -> Result<(), String> {
+    for rule in &mut settings.recurring {
+        if rule.hour > 23 {
+            rule.hour = 23;
+        }
+        if rule.minute > 59 {
+            rule.minute = 59;
+        }
+    }
+    if !pro && settings.recurring.len() > 1 {
+        return Err(i18n::msg(locale, "pro_recurring"));
+    }
+    if !pro {
+        settings.wake_to_execute = false;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -210,34 +360,85 @@ fn save_settings(
     if new_settings.license_key.is_none() {
         new_settings.license_key = inner.settings.license_key.clone();
     }
-    // Preserve history from server state if client sends empty accidentally
     if new_settings.history.is_empty() && !inner.settings.history.is_empty() {
         new_settings.history = inner.settings.history.clone();
     }
-    if !is_pro(&new_settings) && new_settings.presets.len() > 4 {
+    let pro = is_pro(&new_settings);
+    let locale = locale_of(&new_settings);
+    if !pro && new_settings.presets.len() > 4 {
         new_settings.presets.truncate(4);
     }
-    if !is_pro(&new_settings) && new_settings.profiles.len() > 3 {
+    if !pro && new_settings.profiles.len() > 3 {
         new_settings.profiles.truncate(3);
     }
+    validate_recurring(&mut new_settings, pro, &locale)?;
+    if new_settings.grace_seconds == 0 {
+        new_settings.grace_seconds = 1;
+    }
+    if new_settings.grace_seconds > 600 {
+        new_settings.grace_seconds = 600;
+    }
+
+    let recurring_changed = new_settings.recurring != inner.settings.recurring
+        || new_settings.wake_to_execute != inner.settings.wake_to_execute;
+
     settings::save(&new_settings)?;
     inner.settings = new_settings.clone();
+
+    if recurring_changed {
+        let only_recurring = inner
+            .schedule
+            .as_ref()
+            .map(|s| s.from_recurring_id.is_some())
+            .unwrap_or(true);
+        if only_recurring {
+            // Drop armed recurring so it re-arms with new rules
+            if inner
+                .schedule
+                .as_ref()
+                .map(|s| s.from_recurring_id.is_some())
+                .unwrap_or(false)
+            {
+                inner.schedule = None;
+            }
+            arm_recurring_if_idle(&mut inner);
+        } else {
+            sync_wake(&inner);
+        }
+    } else {
+        sync_wake(&inner);
+    }
+
     let snap = snapshot_from(&inner);
     sync_widget(&app, &inner.settings, &snap);
+    let _ = app.emit("schedule-updated", &snap);
     let _ = app.emit("settings-updated", &new_settings);
     Ok(new_settings)
 }
 
 #[tauri::command]
-fn get_license(state: State<'_, AppState>) -> LicenseInfo {
-    let inner = state.0.lock();
-    license::info_from_key(inner.settings.license_key.as_deref())
+fn get_license(app: AppHandle, state: State<'_, AppState>) -> LicenseInfo {
+    let mut inner = state.0.lock();
+    let info = license::info_from_key(inner.settings.license_key.as_deref());
+    // Revoke stored demo / expired / invalid keys (e.g. after 1.1.2)
+    if inner.settings.license_key.is_some() && !info.is_pro {
+        inner.settings.license_key = None;
+        if inner.settings.recurring.len() > 1 {
+            inner.settings.recurring.truncate(1);
+        }
+        inner.settings.wake_to_execute = false;
+        let _ = settings::save(&inner.settings);
+        let _ = app.emit("settings-updated", &inner.settings);
+        return license::info_from_key(None);
+    }
+    info
 }
 
 #[tauri::command]
 fn activate_license(state: State<'_, AppState>, key: String) -> Result<LicenseInfo, String> {
+    let locale = locale_of(&state.0.lock().settings);
     if !license::validate_key(&key) {
-        return Err("Clé de licence invalide.".into());
+        return Err(i18n::msg(&locale, "invalid_license"));
     }
     let mut inner = state.0.lock();
     inner.settings.license_key = Some(key.trim().to_uppercase());
@@ -249,6 +450,11 @@ fn activate_license(state: State<'_, AppState>, key: String) -> Result<LicenseIn
 fn deactivate_license(state: State<'_, AppState>) -> Result<LicenseInfo, String> {
     let mut inner = state.0.lock();
     inner.settings.license_key = None;
+    // Free: keep at most one recurring rule, disable wake
+    if inner.settings.recurring.len() > 1 {
+        inner.settings.recurring.truncate(1);
+    }
+    inner.settings.wake_to_execute = false;
     settings::save(&inner.settings)?;
     Ok(license::info_from_key(None))
 }
@@ -268,13 +474,14 @@ fn schedule_power(
     request: ScheduleRequest,
 ) -> Result<ScheduleSnapshot, String> {
     let conditions = request.conditions.unwrap_or_default();
+    let mut inner = state.0.lock();
+    let locale = locale_of(&inner.settings);
     if request.seconds == 0 && conditions.is_empty() {
-        return Err("Le délai doit être supérieur à 0, ou ajoutez une condition.".into());
+        return Err(i18n::msg(&locale, "delay_or_condition"));
     }
 
-    let mut inner = state.0.lock();
     let pro = is_pro(&inner.settings);
-    ensure_allowed(request.action, &conditions, pro)?;
+    ensure_allowed(request.action, &conditions, pro, &locale)?;
 
     let now = Utc::now().timestamp();
     let total = if request.seconds == 0 {
@@ -292,9 +499,13 @@ fn schedule_power(
         notified_1m: false,
         notified_soon: false,
         waiting_for_conditions: false,
+        grace_ends_at_unix: None,
+        notified_grace: false,
+        from_recurring_id: None,
     });
     inner.settings.last_action = request.action;
     let _ = settings::save(&inner.settings);
+    sync_wake(&inner);
 
     let snap = snapshot_from(&inner);
     sync_widget(&app, &inner.settings, &snap);
@@ -323,8 +534,9 @@ fn list_processes(state: State<'_, AppState>) -> Vec<String> {
 }
 
 #[tauri::command]
-fn parse_duration(input: String) -> Result<u64, String> {
-    parse_duration_inner(&input)
+fn parse_duration(state: State<'_, AppState>, input: String) -> Result<u64, String> {
+    let locale = locale_of(&state.0.lock().settings);
+    parse_duration_inner(&input, &locale)
 }
 
 #[tauri::command]
@@ -338,36 +550,38 @@ fn set_widget_visible(app: AppHandle, state: State<'_, AppState>, visible: bool)
     Ok(())
 }
 
-fn parse_duration_inner(input: &str) -> Result<u64, String> {
+fn parse_duration_inner(input: &str, locale: &Locale) -> Result<u64, String> {
     let temps = input.trim().to_lowercase().replace(' ', "");
     if temps.is_empty() {
-        return Err("Temps vide.".into());
+        return Err(i18n::msg(locale, "empty_time"));
     }
 
     if temps.chars().all(|c| c.is_ascii_digit()) {
-        let minutes: u64 = temps.parse().map_err(|_| "Nombre invalide".to_string())?;
+        let minutes: u64 = temps
+            .parse()
+            .map_err(|_| i18n::msg(locale, "invalid_number"))?;
         let total = minutes.saturating_mul(60);
         if total == 0 {
-            return Err("Le temps doit être supérieur à 0.".into());
+            return Err(i18n::msg(locale, "time_gt_zero"));
         }
         return Ok(total);
     }
 
-    let re = regex_lite_duration(&temps)?;
+    let re = regex_lite_duration(&temps, locale)?;
     if re == 0 {
-        return Err("Le temps doit être supérieur à 0.".into());
+        return Err(i18n::msg(locale, "time_gt_zero"));
     }
     Ok(re)
 }
 
-fn regex_lite_duration(temps: &str) -> Result<u64, String> {
+fn regex_lite_duration(temps: &str, locale: &Locale) -> Result<u64, String> {
     if !temps
         .chars()
         .next()
         .map(|c| c.is_ascii_digit())
         .unwrap_or(false)
     {
-        return Err("Format invalide. Exemples : 30m, 1h20m, 2h30m15s".into());
+        return Err(i18n::msg(locale, "invalid_format"));
     }
 
     let mut rest = temps;
@@ -379,9 +593,11 @@ fn regex_lite_duration(temps: &str) -> Result<u64, String> {
     if let Some(idx) = rest.find('h') {
         let (num, after) = rest.split_at(idx);
         if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
-            return Err("Format invalide.".into());
+            return Err(i18n::msg(locale, "invalid_format"));
         }
-        hours = num.parse().map_err(|_| "Heures invalides".to_string())?;
+        hours = num
+            .parse()
+            .map_err(|_| i18n::msg(locale, "invalid_number"))?;
         rest = &after[1..];
         saw_unit = true;
     }
@@ -389,9 +605,11 @@ fn regex_lite_duration(temps: &str) -> Result<u64, String> {
     if let Some(idx) = rest.find('m') {
         let (num, after) = rest.split_at(idx);
         if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
-            return Err("Format invalide.".into());
+            return Err(i18n::msg(locale, "invalid_format"));
         }
-        minutes = num.parse().map_err(|_| "Minutes invalides".to_string())?;
+        minutes = num
+            .parse()
+            .map_err(|_| i18n::msg(locale, "invalid_number"))?;
         rest = &after[1..];
         saw_unit = true;
     }
@@ -399,15 +617,17 @@ fn regex_lite_duration(temps: &str) -> Result<u64, String> {
     if let Some(idx) = rest.find('s') {
         let (num, after) = rest.split_at(idx);
         if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
-            return Err("Format invalide.".into());
+            return Err(i18n::msg(locale, "invalid_format"));
         }
-        seconds = num.parse().map_err(|_| "Secondes invalides".to_string())?;
+        seconds = num
+            .parse()
+            .map_err(|_| i18n::msg(locale, "invalid_number"))?;
         rest = &after[1..];
         saw_unit = true;
     }
 
     if !rest.is_empty() || !saw_unit {
-        return Err("Format invalide. Exemples : 30m, 1h20m, 2h30m15s".into());
+        return Err(i18n::msg(locale, "invalid_format"));
     }
 
     Ok(hours
@@ -442,14 +662,21 @@ fn emit_alert(app: &AppHandle, stage: &str, remaining: u64, sound: bool, body: &
 }
 
 fn tick(app: &AppHandle, state: &AppState) {
-    let mut fire_action: Option<(PowerAction, u64)> = None;
+    let mut fire_action: Option<(PowerAction, u64, Option<String>)> = None;
     let mut alerts: Vec<(String, u64, bool, String)> = Vec::new();
     let snap: ScheduleSnapshot;
     let settings_snapshot: AppSettings;
 
     {
         let mut inner = state.0.lock();
+        if inner.schedule.is_none() {
+            arm_recurring_if_idle(&mut inner);
+        }
+
         let Some(schedule) = inner.schedule.clone() else {
+            let snap_idle = snapshot_from(&inner);
+            sync_widget(app, &inner.settings, &snap_idle);
+            let _ = app.emit("schedule-updated", &snap_idle);
             return;
         };
 
@@ -459,6 +686,9 @@ fn tick(app: &AppHandle, state: &AppState) {
         let sound = inner.settings.sound_enabled;
         let notify_5m = inner.settings.notify_at_5m;
         let notify_1m = inner.settings.notify_at_1m;
+        let grace_enabled = inner.settings.grace_enabled;
+        let grace_seconds = inner.settings.grace_seconds.max(1);
+        let locale = locale_of(&inner.settings);
 
         let status = if conditions.requires_pro() || !conditions.is_empty() {
             let AppStateInner {
@@ -473,8 +703,10 @@ fn tick(app: &AppHandle, state: &AppState) {
         let remaining = (schedule.ends_at_unix - now).max(0) as u64;
         let timer_done = now >= schedule.ends_at_unix;
         let conditions_ok = status.as_ref().map(|s| s.all_met).unwrap_or(true);
+        let in_grace = schedule.grace_ends_at_unix.is_some();
 
-        if notify_5m
+        if !in_grace
+            && notify_5m
             && !schedule.notified_5m
             && !schedule.waiting_for_conditions
             && remaining <= 300
@@ -487,11 +719,12 @@ fn tick(app: &AppHandle, state: &AppState) {
                 "5m".into(),
                 remaining,
                 sound,
-                "Plus que 5 minutes avant l'action.".into(),
+                i18n::msg(&locale, "alert_5m"),
             ));
         }
 
-        if notify_1m
+        if !in_grace
+            && notify_1m
             && !schedule.notified_1m
             && !schedule.waiting_for_conditions
             && remaining <= 60
@@ -505,9 +738,10 @@ fn tick(app: &AppHandle, state: &AppState) {
                 "1m".into(),
                 remaining,
                 sound,
-                "Plus qu'une minute, action imminente.".into(),
+                i18n::msg(&locale, "alert_1m"),
             ));
-        } else if !schedule.notified_soon
+        } else if !in_grace
+            && !schedule.notified_soon
             && !schedule.waiting_for_conditions
             && remaining <= notify_before
             && remaining > 0
@@ -520,7 +754,7 @@ fn tick(app: &AppHandle, state: &AppState) {
                 "soon".into(),
                 remaining,
                 sound,
-                "Action imminente.".into(),
+                i18n::msg(&locale, "alert_soon"),
             ));
         }
 
@@ -531,17 +765,50 @@ fn tick(app: &AppHandle, state: &AppState) {
         }
 
         if timer_done && conditions_ok {
-            fire_action = Some((schedule.action, schedule.total_seconds));
-            inner.schedule = None;
+            if let Some(grace_end) = schedule.grace_ends_at_unix {
+                if now >= grace_end {
+                    fire_action = Some((
+                        schedule.action,
+                        schedule.total_seconds,
+                        schedule.from_recurring_id.clone(),
+                    ));
+                    inner.schedule = None;
+                }
+            } else if grace_enabled {
+                if let Some(s) = inner.schedule.as_mut() {
+                    s.grace_ends_at_unix = Some(now + grace_seconds as i64);
+                    s.waiting_for_conditions = false;
+                    if !s.notified_grace {
+                        s.notified_grace = true;
+                        alerts.push((
+                            "grace".into(),
+                            grace_seconds,
+                            sound,
+                            i18n::msg(&locale, "alert_grace"),
+                        ));
+                    }
+                }
+                sync_wake(&inner);
+            } else {
+                fire_action = Some((
+                    schedule.action,
+                    schedule.total_seconds,
+                    schedule.from_recurring_id.clone(),
+                ));
+                inner.schedule = None;
+            }
         }
 
         snap = snapshot_from(&inner);
         settings_snapshot = inner.settings.clone();
     }
 
+    let locale = locale_of(&settings_snapshot);
     let title = if snap.active {
-        if snap.waiting_for_conditions {
-            "Aquerty Stop - en attente".into()
+        if snap.in_grace {
+            i18n::msg(&locale, "grace_title")
+        } else if snap.waiting_for_conditions {
+            i18n::msg(&locale, "waiting")
         } else {
             let m = snap.remaining_seconds / 60;
             let s = snap.remaining_seconds % 60;
@@ -557,7 +824,12 @@ fn tick(app: &AppHandle, state: &AppState) {
         let _ = tray.set_tooltip(Some(&title));
     }
     if let Some(widget) = app.get_webview_window("widget") {
-        let _ = widget.set_title(&format_duration_label(snap.remaining_seconds));
+        let label = if snap.in_grace {
+            format_duration_label(snap.grace_remaining_seconds)
+        } else {
+            format_duration_label(snap.remaining_seconds)
+        };
+        let _ = widget.set_title(&label);
     }
     sync_widget(app, &settings_snapshot, &snap);
     let _ = app.emit("schedule-updated", &snap);
@@ -566,15 +838,17 @@ fn tick(app: &AppHandle, state: &AppState) {
         emit_alert(app, &stage, remaining, sound, &body);
     }
 
-    if let Some((action, total_seconds)) = fire_action {
+    if let Some((action, total_seconds, recurring_id)) = fire_action {
         {
             let mut inner = state.0.lock();
+            let loc = locale_of(&inner.settings);
+            let fired_ends = Utc::now().timestamp();
             settings::push_history(
                 &mut inner.settings,
                 HistoryEntry {
-                    at_unix: Utc::now().timestamp(),
+                    at_unix: fired_ends,
                     action,
-                    action_label: action.label().into(),
+                    action_label: i18n::action_label(&loc, action).into(),
                     duration_seconds: total_seconds,
                     duration_label: format_duration_label(total_seconds),
                     cancelled: false,
@@ -582,12 +856,20 @@ fn tick(app: &AppHandle, state: &AppState) {
             );
             let _ = settings::save(&inner.settings);
             let _ = app.emit("settings-updated", &inner.settings);
+            if recurring_id.is_some() {
+                arm_recurring_after(&mut inner, fired_ends);
+            } else {
+                arm_recurring_if_idle(&mut inner);
+            }
+            let snap_after = snapshot_from(&inner);
+            sync_widget(app, &inner.settings, &snap_after);
+            let _ = app.emit("schedule-updated", &snap_after);
         }
         let _ = app
             .notification()
             .builder()
             .title("Aquerty Stop")
-            .body(format!("{} en cours…", action.label()))
+            .body(i18n::action_in_progress(&locale, action))
             .show();
         let _ = app.emit(
             "timer-alert",
@@ -733,6 +1015,12 @@ pub fn run() {
             setup_tray(app.handle())?;
             ensure_widget_window(app.handle())?;
             let _ = register_hotkeys(app.handle());
+
+            {
+                let state = app.state::<AppState>();
+                let mut inner = state.0.lock();
+                arm_recurring_if_idle(&mut inner);
+            }
 
             let handle_tick = app.handle().clone();
             std::thread::spawn(move || loop {

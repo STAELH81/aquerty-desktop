@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aquerty Stop - Timer d’arrêt Windows</title>
+    <meta
+      name="description"
+      content="Programme l’arrêt, le redémarrage ou la veille de ton PC. Version Free et Pro."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="icon" href="./favicon.png" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <header class="top">
+      <div class="brand">
+        <img class="brand-mark" src="./favicon.png" alt="" width="40" height="40" />
+        <span class="brand-name">Aquerty Stop</span>
+      </div>
+      <nav class="top-nav">
+        <a href="#pricing">Tarifs</a>
+        <a class="btn ghost" data-download href="#">Télécharger</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Windows · Free &amp; Pro</p>
+        <h1 class="brand-hero">Aquerty Stop</h1>
+        <p class="lede">
+          Programme l’arrêt, le redémarrage ou la veille - avec délais, récurrence et conditions
+          intelligentes.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" data-download href="#">Télécharger Free</a>
+          <a class="btn" href="#pricing">Voir Pro</a>
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <h2>Une action. Un timer. C’est tout.</h2>
+        <p class="section-lede">
+          Pas un tableau de bord : tu lances, tu pars, le PC s’occupe du reste.
+        </p>
+        <ul class="feature-list">
+          <li>Durées libres : <code>30s</code>, <code>45m</code>, <code>2h</code>, <code>1h20m</code></li>
+          <li>Délai de grâce avant l’action - annulable jusqu’au bout</li>
+          <li>Tray, raccourcis, mini-widget, mises à jour auto</li>
+          <li>FR / EN</li>
+        </ul>
+      </section>
+
+      <section class="section" id="pricing">
+        <h2>Free ou Pro</h2>
+        <p class="section-lede">Commence gratuit. Passe Pro quand tu en as besoin.</p>
+
+        <div class="plans">
+          <article class="plan">
+            <h3>Free</h3>
+            <p class="price">0 €</p>
+            <ul>
+              <li>Arrêt &amp; redémarrage</li>
+              <li>4 presets · 3 profils</li>
+              <li>1 règle récurrente</li>
+              <li>Délai de grâce · FR/EN</li>
+            </ul>
+            <a class="btn primary" data-download href="#">Télécharger</a>
+          </article>
+
+          <article class="plan plan-pro">
+            <h3>Pro</h3>
+            <p class="price">9,99 € <span>à vie</span></p>
+            <p class="alt-price">ou <strong>2,99 € / an</strong></p>
+            <ul>
+              <li>Veille, hibernation, verrouillage</li>
+              <li>Conditions (CPU, process, idle…)</li>
+              <li>Multi-récurrence · wake PC</li>
+              <li>Thème · plus de presets / profils</li>
+            </ul>
+            <div class="cta-row tight">
+              <a class="btn primary" data-buy-life href="#">Acheter à vie - 9,99 €</a>
+              <a class="btn ghost" data-buy-year href="#">2,99 € / an</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section end">
+        <h2>Prêt ?</h2>
+        <p class="section-lede">Installe Free en une minute. Active Pro avec la clé reçue par email.</p>
+        <div class="cta-row">
+          <a class="btn primary" data-download href="#">Télécharger</a>
+          <a class="btn" data-buy-life href="#">Acheter Pro</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Aquerty Stop</span>
+      <a href="https://github.com/STAELH81/aquerty-desktop" rel="noopener">GitHub</a>
+    </footer>
+
+    <script src="./config.js"></script>
+    <script src="./main.js"></script>
+  </body>
+</html>

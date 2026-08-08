@@ -5,6 +5,8 @@ export type PowerAction =
   | "hibernate"
   | "lock";
 
+export type Locale = "fr" | "en";
+
 export interface SmartConditions {
   cpu_below_percent?: number | null;
   cpu_for_seconds?: number | null;
@@ -33,6 +35,10 @@ export interface ScheduleSnapshot {
   conditions: SmartConditions;
   conditionStatus: ConditionStatus | null;
   waitingForConditions: boolean;
+  inGrace: boolean;
+  graceRemainingSeconds: number;
+  fromRecurring: boolean;
+  nextRecurringUnix: number | null;
 }
 
 export interface Profile {
@@ -50,6 +56,16 @@ export interface HistoryEntry {
   durationSeconds: number;
   durationLabel: string;
   cancelled: boolean;
+}
+
+export interface RecurringRule {
+  id: string;
+  enabled: boolean;
+  hour: number;
+  minute: number;
+  /** Monday=0 … Sunday=6 */
+  days: boolean[];
+  action: PowerAction;
 }
 
 export interface AppSettings {
@@ -70,6 +86,11 @@ export interface AppSettings {
   hotkeyOpen: string;
   hotkeyCancel: string;
   autoCheckUpdates: boolean;
+  recurring: RecurringRule[];
+  graceEnabled: boolean;
+  graceSeconds: number;
+  locale: Locale;
+  wakeToExecute: boolean;
 }
 
 export interface LicenseInfo {
@@ -84,24 +105,24 @@ export interface AlertPayload {
   sound: boolean;
 }
 
-export const ACTION_OPTIONS: {
-  id: PowerAction;
-  label: string;
-  pro?: boolean;
-}[] = [
-  { id: "shutdown", label: "Arrêt" },
-  { id: "restart", label: "Redémarrage" },
-  { id: "sleep", label: "Veille", pro: true },
-  { id: "hibernate", label: "Hibernation", pro: true },
-  { id: "lock", label: "Verrouillage", pro: true },
+export const ACTION_IDS: PowerAction[] = [
+  "shutdown",
+  "restart",
+  "sleep",
+  "hibernate",
+  "lock",
 ];
 
+export const PRO_ACTIONS: PowerAction[] = ["sleep", "hibernate", "lock"];
+
+export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+
 export const ACCENT_OPTIONS = [
-  { id: "#e2a84a", label: "Ambre" },
-  { id: "#5ec2a0", label: "Menthe" },
-  { id: "#6aa8e8", label: "Azur" },
-  { id: "#d96a5b", label: "Corail" },
-  { id: "#c4a1e8", label: "Lilas" },
+  { id: "#e2a84a", labelKey: "accentAmber" as const },
+  { id: "#5ec2a0", labelKey: "accentMint" as const },
+  { id: "#6aa8e8", labelKey: "accentAzure" as const },
+  { id: "#d96a5b", labelKey: "accentCoral" as const },
+  { id: "#c4a1e8", labelKey: "accentLilac" as const },
 ];
 
 export function formatCountdown(totalSeconds: number): string {
@@ -154,13 +175,25 @@ export function hasConditions(c: SmartConditions): boolean {
   );
 }
 
+export function defaultRecurringRule(action: PowerAction = "shutdown"): RecurringRule {
+  return {
+    id: `r-${Date.now()}`,
+    enabled: true,
+    hour: 23,
+    minute: 0,
+    days: [true, true, true, true, true, false, false],
+    action,
+  };
+}
+
 export function playBeep(stage: string) {
   try {
     const ctx = new AudioContext();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.value = stage === "fire" ? 660 : stage === "1m" ? 520 : 440;
+    osc.frequency.value =
+      stage === "fire" ? 660 : stage === "1m" || stage === "grace" ? 520 : 440;
     gain.gain.value = 0.05;
     osc.connect(gain);
     gain.connect(ctx.destination);

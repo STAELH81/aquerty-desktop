@@ -19,10 +19,15 @@ function Widget() {
     return () => unlisten?.();
   }, []);
 
-  const label = snap?.waitingForConditions
-    ? "En attente"
-    : snap?.actionLabel || "Aquerty";
-  const time = formatCountdown(snap?.remainingSeconds ?? 0);
+  const inGrace = snap?.inGrace ?? false;
+  const label = inGrace
+    ? "Grâce"
+    : snap?.waitingForConditions
+      ? "En attente"
+      : snap?.actionLabel || "Aquerty";
+  const time = formatCountdown(
+    inGrace ? (snap?.graceRemainingSeconds ?? 0) : (snap?.remainingSeconds ?? 0),
+  );
 
   return (
     <div

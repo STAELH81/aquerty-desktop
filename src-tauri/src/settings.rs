@@ -26,6 +26,37 @@ pub struct HistoryEntry {
     pub cancelled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringRule {
+    pub id: String,
+    pub enabled: bool,
+    pub hour: u32,
+    pub minute: u32,
+    /// Monday=0 … Sunday=6
+    pub days: [bool; 7],
+    pub action: PowerAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Locale {
+    Fr,
+    En,
+}
+
+impl Default for Locale {
+    fn default() -> Self {
+        Self::Fr
+    }
+}
+
+impl Locale {
+    pub fn is_en(&self) -> bool {
+        matches!(self, Self::En)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -56,10 +87,24 @@ pub struct AppSettings {
     pub hotkey_cancel: String,
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
+    #[serde(default)]
+    pub recurring: Vec<RecurringRule>,
+    #[serde(default = "default_true")]
+    pub grace_enabled: bool,
+    #[serde(default = "default_grace_seconds")]
+    pub grace_seconds: u64,
+    #[serde(default)]
+    pub locale: Locale,
+    #[serde(default = "default_true")]
+    pub wake_to_execute: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_grace_seconds() -> u64 {
+    30
 }
 
 fn default_accent() -> String {
@@ -129,6 +174,11 @@ impl Default for AppSettings {
             hotkey_open: default_hotkey_open(),
             hotkey_cancel: default_hotkey_cancel(),
             auto_check_updates: true,
+            recurring: Vec::new(),
+            grace_enabled: true,
+            grace_seconds: default_grace_seconds(),
+            locale: Locale::default(),
+            wake_to_execute: true,
         }
     }
 }

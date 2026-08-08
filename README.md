@@ -46,10 +46,12 @@ Details dans `docs/RELEASES.md`.
 
 ## Licence
 
-- Gratuit : arret, redemarrage, 4 presets, 3 profils
-- Pro : veille, hibernation, verrouillage, conditions, plus de profils
+- Gratuit : arret, redemarrage, 4 presets, 3 profils, 1 regle recurrente, delai de grace, FR/EN
+- Pro : veille, hibernation, verrouillage, conditions, theme, wake PC, multi-recurrence, plus de profils
+- Prix : **9,99 € a vie** ou **2,99 € / an** (Gumroad) - details dans [`docs/SELLING.md`](docs/SELLING.md)
+- Landing : dossier [`landing/`](landing/) (GitHub Pages)
 
-Demo : `AQUERTY-PRO-DEMO-2026`
+A partir de 1.1.2 la cle demo n'est plus acceptee.
 
 ## Legacy
 

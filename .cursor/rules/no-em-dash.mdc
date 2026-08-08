@@ -1,0 +1,16 @@
+---
+description: Never use em dashes (tirets cadratins) in any text
+alwaysApply: true
+---
+
+# No em dashes
+
+Never use the em dash character `—` (tiret cadratin) or en dash `–` in UI copy, docs, comments, commit messages, landing pages, or canvases.
+
+Use a normal hyphen `-`, a colon `:`, parentheses, or rephrase the sentence instead.
+
+Examples:
+- Bad: `Aquerty Stop — Timer`
+- Good: `Aquerty Stop - Timer`
+- Bad: `Acheter Pro à vie — 9,99 €`
+- Good: `Acheter Pro à vie - 9,99 €`
