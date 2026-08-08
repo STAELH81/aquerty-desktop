@@ -163,12 +163,12 @@ function App() {
     setError(null);
     const opt = ACTION_OPTIONS.find((a) => a.id === action);
     if (opt?.pro && !isPro) {
-      setError("Veille, hibernation et verrouillage sont réservés à Pro.");
+      setError("Veille, hibernation et verrouillage : version Pro.");
       setPanel("license");
       return;
     }
     if (hasConditions(conditions) && !isPro) {
-      setError("Les conditions intelligentes sont réservées à Pro.");
+      setError("Conditions : version Pro.");
       setPanel("license");
       return;
     }
@@ -288,9 +288,9 @@ function App() {
         if (!silent) setUpdateMsg("Déjà à jour.");
         return;
       }
-      setUpdateMsg(`Mise à jour ${update.version} disponible — installation…`);
+      setUpdateMsg(`Mise à jour ${update.version} : installation…`);
       await update.downloadAndInstall();
-      setUpdateMsg("Installée — redémarrage…");
+      setUpdateMsg("Installée, redémarrage…");
       await relaunch();
     } catch (e) {
       if (!silent) {
@@ -321,7 +321,7 @@ function App() {
         {error && <p className="error">{error}</p>}
 
         {panel === "main" && (
-          <section className="hero enter">
+          <section className="hero enter main-panel">
             {active ? (
               <>
                 <p className="eyebrow">
@@ -336,186 +336,199 @@ function App() {
                 <button className="btn danger" onClick={onCancel}>
                   Annuler
                 </button>
+                <nav className="footer-nav">
+                  <button type="button" className="ghost" onClick={() => setPanel("settings")}>
+                    Réglages
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setPanel("history")}>
+                    Historique
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setPanel("license")}>
+                    Licence
+                  </button>
+                </nav>
               </>
             ) : (
               <>
-                <p className="eyebrow">Programmer une action</p>
+                <div className="main-scroll">
+                  <p className="eyebrow">Programmer une action</p>
 
-                {(settings?.profiles?.length ?? 0) > 0 && (
-                  <div className="profiles" role="group" aria-label="Profils">
-                    {settings!.profiles.map((p) => (
+                  {(settings?.profiles?.length ?? 0) > 0 && (
+                    <div className="profiles" role="group" aria-label="Profils">
+                      {settings!.profiles.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className="chip profile"
+                          onClick={() => applyProfile(p)}
+                          title={`${p.durationInput} · ${p.action}`}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="time-block">
+                    <input
+                      className="time-input"
+                      value={durationInput}
+                      onChange={(e) => setDurationInput(e.target.value)}
+                      placeholder="1h20m"
+                      spellCheck={false}
+                      aria-label="Durée"
+                    />
+                    <p className="hint">
+                      {parsedSeconds != null
+                        ? `= ${formatCountdown(parsedSeconds)}`
+                        : "Ex. 30s, 45m, 2h, 1h20m"}
+                    </p>
+                  </div>
+
+                  <div className="presets" role="group" aria-label="Presets">
+                    {(settings?.presets ?? []).map((p) => (
                       <button
-                        key={p.id}
+                        key={p}
                         type="button"
-                        className="chip profile"
-                        onClick={() => applyProfile(p)}
-                        title={`${p.durationInput} · ${p.action}`}
+                        className={`chip ${durationInput === p ? "active" : ""}`}
+                        onClick={() => setDurationInput(p)}
                       >
-                        {p.name}
+                        {p}
                       </button>
                     ))}
                   </div>
-                )}
 
-                <div className="time-block">
-                  <input
-                    className="time-input"
-                    value={durationInput}
-                    onChange={(e) => setDurationInput(e.target.value)}
-                    placeholder="1h20m"
-                    spellCheck={false}
-                    aria-label="Durée"
-                  />
-                  <p className="hint">
-                    {parsedSeconds != null
-                      ? `= ${formatCountdown(parsedSeconds)}`
-                      : "Formats : 30s · 45m · 2h · 1h20m"}
-                  </p>
-                </div>
-
-                <div className="presets" role="group" aria-label="Presets">
-                  {(settings?.presets ?? []).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      className={`chip ${durationInput === p ? "active" : ""}`}
-                      onClick={() => setDurationInput(p)}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="actions" role="group" aria-label="Action">
-                  {ACTION_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      className={`action ${action === opt.id ? "active" : ""}`}
-                      onClick={() => setAction(opt.id)}
-                    >
-                      {opt.label}
-                      {opt.pro && !isPro ? <span className="pro-dot">Pro</span> : null}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="row tight">
-                  <button type="button" className="linkish" onClick={openProcessPicker}>
-                    Fin de process…
-                  </button>
-                  <button
-                    type="button"
-                    className="linkish"
-                    onClick={() => setShowConditions((v) => !v)}
-                  >
-                    {showConditions ? "Masquer conditions" : "Conditions"}
-                    {!isPro ? " (Pro)" : ""}
-                  </button>
-                </div>
-
-                {showConditions && (
-                  <div className="conditions enter">
-                    <label>
-                      CPU sous
-                      <input
-                        type="number"
-                        min={1}
-                        max={100}
-                        placeholder="%"
-                        value={conditions.cpu_below_percent ?? ""}
-                        onChange={(e) =>
-                          setConditions((c) => ({
-                            ...c,
-                            cpu_below_percent: e.target.value
-                              ? Number(e.target.value)
-                              : null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      pendant (s)
-                      <input
-                        type="number"
-                        min={1}
-                        placeholder="60"
-                        value={conditions.cpu_for_seconds ?? ""}
-                        onChange={(e) =>
-                          setConditions((c) => ({
-                            ...c,
-                            cpu_for_seconds: e.target.value
-                              ? Number(e.target.value)
-                              : null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="wide">
-                      Quand le processus se ferme
-                      <input
-                        placeholder="ex. chrome.exe"
-                        value={conditions.process_closed ?? ""}
-                        onChange={(e) =>
-                          setConditions((c) => ({
-                            ...c,
-                            process_closed: e.target.value || null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Inactivité (s)
-                      <input
-                        type="number"
-                        min={1}
-                        placeholder="300"
-                        value={conditions.idle_seconds ?? ""}
-                        onChange={(e) =>
-                          setConditions((c) => ({
-                            ...c,
-                            idle_seconds: e.target.value
-                              ? Number(e.target.value)
-                              : null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="wide">
-                      Heure cible
-                      <input
-                        type="datetime-local"
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setConditions((c) => ({
-                            ...c,
-                            target_unix: v
-                              ? Math.floor(new Date(v).getTime() / 1000)
-                              : null,
-                          }));
-                        }}
-                      />
-                    </label>
+                  <div className="actions" role="group" aria-label="Action">
+                    {ACTION_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className={`action ${action === opt.id ? "active" : ""}`}
+                        onClick={() => setAction(opt.id)}
+                      >
+                        {opt.label}
+                        {opt.pro && !isPro ? <span className="pro-dot">Pro</span> : null}
+                      </button>
+                    ))}
                   </div>
-                )}
 
-                <button className="btn primary" onClick={openConfirm}>
-                  Continuer
-                </button>
+                  <div className="row tight">
+                    <button type="button" className="linkish" onClick={openProcessPicker}>
+                      Fin de process…
+                    </button>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={() => setShowConditions((v) => !v)}
+                    >
+                      {showConditions ? "Masquer conditions" : "Conditions"}
+                      {!isPro ? " (Pro)" : ""}
+                    </button>
+                  </div>
+
+                  {showConditions && (
+                    <div className="conditions enter">
+                      <label>
+                        CPU sous
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          placeholder="%"
+                          value={conditions.cpu_below_percent ?? ""}
+                          onChange={(e) =>
+                            setConditions((c) => ({
+                              ...c,
+                              cpu_below_percent: e.target.value
+                                ? Number(e.target.value)
+                                : null,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        pendant (s)
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="60"
+                          value={conditions.cpu_for_seconds ?? ""}
+                          onChange={(e) =>
+                            setConditions((c) => ({
+                              ...c,
+                              cpu_for_seconds: e.target.value
+                                ? Number(e.target.value)
+                                : null,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="wide">
+                        Quand le processus se ferme
+                        <input
+                          placeholder="ex. chrome.exe"
+                          value={conditions.process_closed ?? ""}
+                          onChange={(e) =>
+                            setConditions((c) => ({
+                              ...c,
+                              process_closed: e.target.value || null,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Inactivité (s)
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="300"
+                          value={conditions.idle_seconds ?? ""}
+                          onChange={(e) =>
+                            setConditions((c) => ({
+                              ...c,
+                              idle_seconds: e.target.value
+                                ? Number(e.target.value)
+                                : null,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="wide">
+                        Heure cible
+                        <input
+                          type="datetime-local"
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setConditions((c) => ({
+                              ...c,
+                              target_unix: v
+                                ? Math.floor(new Date(v).getTime() / 1000)
+                                : null,
+                            }));
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  <button className="btn primary" onClick={openConfirm}>
+                    Continuer
+                  </button>
+                </div>
+
+                <nav className="footer-nav">
+                  <button type="button" className="ghost" onClick={() => setPanel("settings")}>
+                    Réglages
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setPanel("history")}>
+                    Historique
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setPanel("license")}>
+                    Licence
+                  </button>
+                </nav>
               </>
             )}
-
-            <nav className="footer-nav">
-              <button type="button" className="ghost" onClick={() => setPanel("settings")}>
-                Réglages
-              </button>
-              <button type="button" className="ghost" onClick={() => setPanel("history")}>
-                Historique
-              </button>
-              <button type="button" className="ghost" onClick={() => setPanel("license")}>
-                Licence
-              </button>
-            </nav>
           </section>
         )}
 
@@ -620,7 +633,7 @@ function App() {
                 <label className="toggle-row">
                   <span>
                     <strong>Réduire dans le tray</strong>
-                    <small>Fermer la fenêtre garde l’app en arrière-plan</small>
+                    <small>La fenêtre se cache, l'app reste ouverte</small>
                   </span>
                   <input
                     type="checkbox"
@@ -631,7 +644,7 @@ function App() {
                 <label className="toggle-row">
                   <span>
                     <strong>Lancer au démarrage</strong>
-                    <small>Ouvre Aquerty Stop avec Windows</small>
+                    <small>Démarre avec Windows</small>
                   </span>
                   <input
                     type="checkbox"
@@ -642,7 +655,7 @@ function App() {
                 <label className="toggle-row">
                   <span>
                     <strong>Mini-widget</strong>
-                    <small>Petite fenêtre countdown quand un timer est actif</small>
+                    <small>Compteur flottant pendant un timer</small>
                   </span>
                   <input
                     type="checkbox"
@@ -658,7 +671,7 @@ function App() {
                 <label className="toggle-row">
                   <span>
                     <strong>Sons d’alerte</strong>
-                    <small>Bip à 5 min, 1 min et au déclenchement</small>
+                    <small>Son avant l'action</small>
                   </span>
                   <input
                     type="checkbox"
@@ -710,7 +723,7 @@ function App() {
               <div className="settings-section">
                 <h3 className="settings-heading">Raccourcis clavier</h3>
                 <p className="settings-desc">
-                  Format Tauri : <code>CommandOrControl+Shift+A</code>
+                  Exemple : <code>CommandOrControl+Shift+A</code>
                 </p>
                 <label className="field">
                   Ouvrir la fenêtre
@@ -738,7 +751,7 @@ function App() {
 
               <div className="settings-section">
                 <h3 className="settings-heading">Presets de durée</h3>
-                <p className="settings-desc">Raccourcis affichés sous le champ temps.</p>
+                <p className="settings-desc">Boutons sous le champ de durée.</p>
                 <div className="presets">
                   {settings.presets.map((p) => (
                     <button
@@ -771,7 +784,7 @@ function App() {
               <div className="settings-section">
                 <h3 className="settings-heading">Profils 1-clic</h3>
                 <p className="settings-desc">
-                  Sauve le temps + action + conditions actuels pour les rappeler d’un clic.
+                  Enregistre durée, action et conditions pour un rappel rapide.
                 </p>
                 <div className="presets">
                   {settings.profiles.map((p) => (
@@ -801,12 +814,12 @@ function App() {
               <div className="settings-section">
                 <h3 className="settings-heading">Mises à jour auto</h3>
                 <p className="settings-desc">
-                  Via GitHub Releases — l’app peut se mettre à jour toute seule.
+                  Mise à jour depuis les releases GitHub.
                 </p>
                 <label className="toggle-row">
                   <span>
                     <strong>Vérifier au démarrage</strong>
-                    <small>Cherche une nouvelle version à chaque lancement</small>
+                    <small>Contrôle une nouvelle version au lancement</small>
                   </span>
                   <input
                     type="checkbox"

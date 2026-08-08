@@ -1,31 +1,30 @@
 # Aquerty Stop
 
-Application Windows premium pour programmer l'arrêt, le redémarrage, la veille, l'hibernation ou le verrouillage — avec conditions intelligentes.
+Timer Windows pour programmer l'arret, le redemarrage, la veille, l'hibernation ou le verrouillage, avec conditions optionnelles.
 
 Repo : [STAELH81/aquerty-desktop](https://github.com/STAELH81/aquerty-desktop)
 
 ## Stack
 
-- **Tauri 2** + Rust (actions système, tray, timer)
-- **React** + TypeScript + Vite (UI)
+- Tauri 2 + Rust
+- React + TypeScript + Vite
 
-## Prérequis
+## Prerequisites
 
 - Node.js 20+
 - Rust (stable)
-- Visual Studio Build Tools 2022 avec charge de travail **Desktop development with C++**
+- Visual Studio Build Tools 2022 (Desktop development with C++)
 
-## Développement
+## Dev
 
 ```bash
 npm install
-# Dans un terminal "Developer Command Prompt for VS" (ou via build.bat pour la release) :
 npm run tauri dev
 ```
 
-Sous Windows, le linker MSVC doit être dans le PATH (`vcvars64.bat`).
+MSVC doit etre dans le PATH (`vcvars64.bat`).
 
-## Build installateur
+## Build
 
 ```bash
 build.bat
@@ -37,31 +36,21 @@ Ou :
 npm run tauri build
 ```
 
-Les installateurs sont générés dans `D:\aquerty-cargo-target\release\bundle\` (et copiés dans `dist-installers/` après un build réussi) :
+## Updates
 
-- `Aquerty Stop_1.0.0_x64-setup.exe` (NSIS)
-- `Aquerty Stop_1.0.0_x64_en-US.msi`
-
-## Mises à jour auto
-
-L’app est prête pour `tauri-plugin-updater` via GitHub Releases :
+Updater GitHub Releases :
 
 `https://github.com/STAELH81/aquerty-desktop/releases/latest/download/latest.json`
 
-Pour l’activer vraiment :
+Details dans `docs/RELEASES.md`.
 
-1. `npm run tauri signer generate -w ~/.tauri/aquerty.key`
-2. Mettre la **pubkey** dans `src-tauri/tauri.conf.json`
-3. Passer `createUpdaterArtifacts` à `true`
-4. Publier une release signée sur GitHub
+## Licence
 
-## Licence freemium
+- Gratuit : arret, redemarrage, 4 presets, 3 profils
+- Pro : veille, hibernation, verrouillage, conditions, plus de profils
 
-- **Gratuit** : arrêt, redémarrage, 4 presets
-- **Pro** : veille, hibernation, verrouillage, conditions intelligentes, presets illimités
-
-Clé de démo : `AQUERTY-PRO-DEMO-2026`
+Demo : `AQUERTY-PRO-DEMO-2026`
 
 ## Legacy
 
-Les anciens scripts batch/PowerShell sont dans `legacy/`.
+Anciens scripts dans `legacy/`.

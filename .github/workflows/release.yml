@@ -51,10 +51,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Aquerty Stop ${{ github.ref_name }}
           releaseBody: |
-            Mise à jour Aquerty Stop.
+            Update Aquerty Stop.
 
-            Installe le setup Windows, ou laisse l'app se mettre à jour toute seule
-            (Réglages → Vérifier les mises à jour).
+            Install the Windows setup, or use Settings > Check for updates.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

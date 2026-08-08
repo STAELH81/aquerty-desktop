@@ -17,7 +17,7 @@ set "msg="
 set /p msg=Message de commit : 
 if not defined msg (
     echo.
-    echo  [ERREUR] Message vide — reessaie.
+    echo  [ERREUR] Message vide, reessaie.
     echo.
     goto :askMsg
 )
@@ -32,7 +32,7 @@ git add -A || (
 echo  [2/4] git commit...
 git commit -m "%msg%"
 if errorlevel 1 (
-    echo  [INFO] Rien de nouveau a committer — on continue.
+    echo  [INFO] Rien de nouveau a committer, on continue.
 )
 
 echo  [3/4] git push...
@@ -76,7 +76,7 @@ echo.
 echo  [4/4] git tag %tagName% ...
 git tag "%tagName%"
 if errorlevel 1 (
-    echo  [ERREUR] Tag impossible — il existe peut-etre deja.
+    echo  [ERREUR] Tag impossible (existe peut-etre deja).
     goto :fin
 )
 
@@ -88,7 +88,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo  OK — regarde Actions :
+echo  OK, regarde Actions :
 echo  https://github.com/STAELH81/aquerty-desktop/actions
 goto :ok
 

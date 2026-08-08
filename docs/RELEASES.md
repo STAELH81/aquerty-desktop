@@ -43,7 +43,7 @@ git tag v1.2.0
 git push origin v1.2.0
 ```
 
-4. Va sur **Actions** du repo → le job **Release** tourne (~10–20 min)
+4. Va sur **Actions** du repo -> le job **Release** tourne (environ 10-20 min)
 5. Quand c’est vert → onglet **Releases** : setup `.exe` + `latest.json` sont uploadés
 
 L’app installée pointe déjà vers :

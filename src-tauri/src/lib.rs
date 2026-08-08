@@ -1,4 +1,4 @@
-mod conditions;
+﻿mod conditions;
 mod license;
 mod power;
 mod settings;
@@ -84,13 +84,13 @@ fn is_pro(settings: &AppSettings) -> bool {
 fn ensure_allowed(action: PowerAction, conditions: &SmartConditions, pro: bool) -> Result<(), String> {
     if action.requires_pro() && !pro {
         return Err(
-            "Fonction Pro : passez à Aquerty Stop Pro pour Veille / Hibernation / Verrouillage."
+            "Fonction Pro : veille, hibernation et verrouillage."
                 .into(),
         );
     }
     if conditions.requires_pro() && !pro {
         return Err(
-            "Fonction Pro : les conditions intelligentes nécessitent une licence Pro.".into(),
+            "Fonction Pro : conditions réservées à la licence Pro.".into(),
         );
     }
     Ok(())
@@ -505,7 +505,7 @@ fn tick(app: &AppHandle, state: &AppState) {
                 "1m".into(),
                 remaining,
                 sound,
-                "Plus qu'une minute — action imminente.".into(),
+                "Plus qu'une minute, action imminente.".into(),
             ));
         } else if !schedule.notified_soon
             && !schedule.waiting_for_conditions
@@ -541,11 +541,11 @@ fn tick(app: &AppHandle, state: &AppState) {
 
     let title = if snap.active {
         if snap.waiting_for_conditions {
-            "Aquerty Stop — en attente".into()
+            "Aquerty Stop - en attente".into()
         } else {
             let m = snap.remaining_seconds / 60;
             let s = snap.remaining_seconds % 60;
-            format!("Aquerty Stop — {m:02}:{s:02}")
+            format!("Aquerty Stop - {m:02}:{s:02}")
         }
     } else {
         "Aquerty Stop".into()
