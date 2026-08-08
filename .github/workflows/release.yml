@@ -32,13 +32,25 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Prepare signing key file
+        shell: pwsh
+        env:
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RAW_KEY)) {
+            throw "Secret TAURI_SIGNING_PRIVATE_KEY is missing or empty"
+          }
+          $path = Join-Path $env:RUNNER_TEMP "tauri.key"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::WriteAllText($path, ($env:RAW_KEY.Trim() + "`n"), $utf8)
+          "TAURI_SIGNING_PRIVATE_KEY_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Signing key written ($((Get-Item $path).Length) bytes)"
+
       - name: Build & publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Cle privee uniquement. Ne PAS definir de password ici si la cle
-          # a ete generee sans mot de passe (sinon: "Wrong password for that key").
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Aquerty Stop ${{ github.ref_name }}
