@@ -45,11 +45,11 @@
         "installMode": "currentUser"
       }
     },
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_SIGNING_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4NDEzQjY3RUVBRjkxNzcKUldSM2thL3VaenRCNkI5QkdJMHY1b3diblc3Z01QZzl1MHF0bjM5bVVDN0Z1aCtvUTVQVS9NQ3QK",
       "endpoints": [
         "https://github.com/STAELH81/aquerty-desktop/releases/latest/download/latest.json"
       ],
